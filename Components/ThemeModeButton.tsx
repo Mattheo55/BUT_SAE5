@@ -3,6 +3,7 @@ import React, { useContext } from 'react'
 import ThemedText from './ThemedText'
 import { ThemeContext } from './ThemeContext';
 import styles from '@/styles/styles';
+import { Moon, Sun } from 'lucide-react-native';
 
 export default function ThemeModeButton() {
 
@@ -11,7 +12,7 @@ export default function ThemeModeButton() {
 
   return (
     <Pressable style={styles.button} onPress={() => setIsDarkTheme(!isDarkTheme)}>
-        <ThemedText>{isDarkTheme ? "🌞" : "🌙"}</ThemedText>
+        <ThemedText>{isDarkTheme ? <Sun /> : <Moon />}</ThemedText>
     </Pressable>
   )
 }

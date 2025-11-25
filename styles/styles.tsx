@@ -10,7 +10,7 @@ export default StyleSheet.create({
     backgroundColor: "#FFFFFF",
   },
   dark: {
-    backgroundColor: "#000000",
+    backgroundColor: "#121212",
   },
 
   text: {

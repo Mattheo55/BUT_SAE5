@@ -1,14 +1,15 @@
 import styles from '@/styles/styles';
 import React, { useContext } from 'react';
-import { StyleSheet, Text } from 'react-native';
+import { StyleSheet, Text, TextProps } from 'react-native';
 import { ThemeContext } from './ThemeContext';
 
-type ThemedTextProps = {
-    children : string,
-    type?: "default" | "title" | "subtitle"
+type ThemedTextProps = TextProps & {
+    children : React.ReactNode,
+    type?: "default" | "title" | "subtitle",
+    bold?: boolean
 }
 
-export default function ThemedText({ children, type="default" } : ThemedTextProps) {
+export default function ThemedText({ children, type="default", bold } : ThemedTextProps) {
 
       const {isDarkTheme} = useContext(ThemeContext);
 
@@ -19,7 +20,7 @@ export default function ThemedText({ children, type="default" } : ThemedTextProp
         type === "default" ? textStyles.default : undefined,
         type === "title" ? textStyles.title : undefined,
         type === "subtitle" ? textStyles.subtitle : undefined,
-
+        bold ? {fontWeight: "bold"} : undefined,
     ]}>
         { children }
     </Text>
@@ -32,5 +33,9 @@ const textStyles = StyleSheet.create({
         fontSize: 24,
         fontWeight: "bold",
     },
-    subtitle: {}
+    subtitle: {
+        marginTop: 6,
+        fontSize: 13,
+        color: '#6B6F7B',
+    }
 })

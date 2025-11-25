@@ -25,7 +25,10 @@ export default function Index() {
         <View style={{ marginBottom: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
           <ThemedText bold> Dernier animal reconnue</ThemedText>
           <Pressable onPress={() => rouer.push("/(tabs)/historique")}>
-            <ThemedText> Historique <MoveRight /> </ThemedText>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <ThemedText> Historique </ThemedText>
+              <MoveRight />
+            </View>
           </Pressable>
         </View>
 

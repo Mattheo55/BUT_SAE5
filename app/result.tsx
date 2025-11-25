@@ -1,13 +1,12 @@
+import ThemedText from '@/Components/ThemedText'
+import ThemedView from '@/Components/ThemedView'
 import React from 'react'
-import { StyleSheet, Text } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
+
 
 export default function result() {
   return (
-    <SafeAreaView>
-      <Text>result</Text>
-    </SafeAreaView>
+    <ThemedView>
+      <ThemedText>result</ThemedText>
+    </ThemedView>
   )
 }
-
-const styles = StyleSheet.create({})

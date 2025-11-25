@@ -1,7 +1,6 @@
 import { Tabs } from 'expo-router'
 import { Camera, History, House } from 'lucide-react-native'
 import React from 'react'
-import { StyleSheet } from 'react-native'
 
 export default function _layout() {
   return (
@@ -37,4 +36,3 @@ export default function _layout() {
   )
 }
 
-const styles = StyleSheet.create({})

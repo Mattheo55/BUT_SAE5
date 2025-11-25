@@ -1,28 +1,20 @@
-import React, { useContext } from 'react';
-import { Pressable, Text } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import styles from '../../styles/styles';
-import { ThemeContext } from '../ThemeContext';
+import ThemedText from '@/Components/ThemedText';
+import ThemedView from '@/Components/ThemedView';
+import ThemeModeButton from '@/Components/ThemeModeButton';
+import React from 'react';
+import { View } from 'react-native';
 
 export default function Index() {
 
-  const {isDarkTheme, setIsDarkTheme} = useContext(ThemeContext);
 
   return (
-    <SafeAreaView style={[styles.container, isDarkTheme ? styles.dark : styles.light]}>
-      <Text style={[styles.title, isDarkTheme ? styles.darkText : styles.lightText]}>
-        Acceuil &lt;Nom de l'app&gt;
-      </Text>
+    <ThemedView>
 
-      <Pressable 
-          style={styles.button}
-          onPress={() => setIsDarkTheme(!isDarkTheme)}
-      >
-          <Text style={styles.buttonText}>
-            Thème sombre 
-            {isDarkTheme ? "🌞" : "🌙"}
-          </Text>
-      </Pressable>
-    </SafeAreaView>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+        <ThemedText type='title'>Accueil</ThemedText>
+        <ThemeModeButton/>
+      </View>
+
+    </ThemedView>
   );
 }

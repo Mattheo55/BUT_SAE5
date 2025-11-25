@@ -3,16 +3,7 @@ import { StyleSheet } from 'react-native';
 export default StyleSheet.create({
   container: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  title: {
-    position: 'absolute',
-    top: 20,
-    left: 20,
-    fontSize: 24,
-    fontWeight: "bold",
+    padding: 25,
   },
 
   light: {
@@ -35,9 +26,6 @@ export default StyleSheet.create({
   },
 
   button: {
-    position: 'absolute',
-    top: 20,
-    right: 20,
     paddingHorizontal: 20,
     paddingVertical: 10,
     backgroundColor: "#3b82f6",

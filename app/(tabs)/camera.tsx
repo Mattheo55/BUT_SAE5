@@ -1,11 +1,14 @@
-import { Camera, CameraMode, CameraType, CameraView } from 'expo-camera';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Camera, CameraMode, CameraType, CameraView, FlashMode } from 'expo-camera';
 import { Image } from "expo-image";
+import * as ImagePicker from 'expo-image-picker';
 import React, { useEffect, useRef, useState } from 'react';
-import { Button, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 export default function CameraScreen() {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [type, setType] = useState<CameraType>("back");
+  const [flash, setFlash] = useState<FlashMode>("off");
   const ref = useRef<CameraView>(null);
   const [uri, setUri] = useState<string | null>(null);
   const [mode] = useState<CameraMode>("picture");
@@ -22,11 +25,39 @@ export default function CameraScreen() {
 
   const switchCamera = () => {
     setType((prevType) => (prevType === "back" ? "front" : "back"));
+    console.log('Flash mode:', flash); //a enlever après test
   }
+
+  const flashCamera = () => {
+    setFlash((prevFlash) => (prevFlash === "off" ? "on" : "off"));
+    console.log('Flash mode: (inversé)', flash); //a enlever après test
+  };
 
   const takePicture = async () => {
     const photo = await ref.current?.takePictureAsync();
     if (photo?.uri) setUri(photo.uri);
+  };
+
+  const pickImage = async () => {
+    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    
+    if (permissionResult.granted === false) {
+      alert("La permission d'accéder à la galerie est requise pour cette fonctionnalité !");
+      return;
+    }
+
+    let result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: false, 
+      quality: 1,
+    });
+
+    if (!result.canceled) {
+      if (result.assets && result.assets.length > 0) {
+        const selectedUri = result.assets[0].uri;
+        setUri(selectedUri);
+      }
+    }
   };
 
   const renderPicture = (uri: string) => {
@@ -49,7 +80,7 @@ export default function CameraScreen() {
           onPress={() => setUri(null)} 
         >
           <Text>
-            Take another picture
+            Prendre une nouvelle photo
           </Text>
         </Pressable>
       </View>
@@ -59,13 +90,34 @@ export default function CameraScreen() {
   const renderCamera = () => {
     return (
       <View style={styles.container}>
+
         <CameraView style={styles.camera}  
           ref={ref}
           mode={mode}
           facing={type}
+          flash={flash}
           mute={false}
           responsiveOrientationWhenOrientationLocked/>
-        <View style={styles.buttonContainer}>
+
+        <View style={styles.topControls}>
+            <Pressable
+              onPress={flashCamera}
+              style={styles.flashButton} 
+            >
+              <MaterialCommunityIcons
+                name={flash === "on" ? "flash" : "flash-off"} 
+                size={30}
+                color={flash === "on" ? "yellow" : "white"} 
+              />
+            </Pressable>
+        </View>
+
+        <View style={styles.bottomControls}>
+
+            <Pressable onPress={pickImage} style={styles.iconButton}>
+                <MaterialCommunityIcons name="image-multiple" size={30} color="white" />
+            </Pressable>
+
           <Pressable onPress={takePicture}>
               {({ pressed }) => (
                 <View
@@ -87,7 +139,10 @@ export default function CameraScreen() {
                 </View>
               )}
             </Pressable>
-            <Button title="🔄 Changer caméra" onPress={switchCamera} />
+
+            <Pressable onPress={switchCamera} style={styles.iconButton}>
+                <MaterialCommunityIcons name="cached" size={30} color="white" />
+            </Pressable>
         </View>
       </View>
     );
@@ -103,12 +158,38 @@ export default function CameraScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   camera: { flex: 1 },
-  buttonContainer: {
+
+  topControls: {
     position: 'absolute',
+    top: 50,
+    left: 20,
+    zIndex: 10,
+  },
+
+  flashButton: {
+    padding: 10,
+    borderRadius: 5,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
     alignItems: 'center',
-    gap: 20,
+    justifyContent: 'center',
+  },
+
+  bottomControls: {
+    position: 'absolute',
+    flexDirection: 'row', 
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%', 
+    paddingHorizontal: 30,
     bottom: 40,
-    alignSelf: 'center',
+  },
+
+  iconButton: {
+      padding: 10,
+      borderRadius: 50, 
+      backgroundColor: 'rgba(0, 0, 0, 0.4)',
+      alignItems: 'center',
+      justifyContent: 'center',
   },
 
   shutterBtn: {
@@ -126,4 +207,5 @@ const styles = StyleSheet.create({
     height: 70,
     borderRadius: 50,
   },
+
 });

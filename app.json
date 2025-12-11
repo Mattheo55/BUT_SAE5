@@ -23,7 +23,9 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "permissions": ["CAMERA"],
+      "permissions": [
+        "CAMERA"
+      ],
       "package": "com.tonnom.app"
     },
     "web": {
@@ -43,7 +45,9 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      "react-native-vision-camera",
+      "react-native-fast-tflite"
     ],
     "experiments": {
       "typedRoutes": true,

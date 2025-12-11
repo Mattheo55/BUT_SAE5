@@ -1,327 +1,224 @@
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Camera, CameraMode, CameraType, CameraView, FlashMode } from 'expo-camera';
-import { Image } from "expo-image";
-import * as ImageManipulator from 'expo-image-manipulator'; // Nécessaire pour resize
-import * as ImagePicker from 'expo-image-picker';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-// Nouveaux imports TFLite
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { StyleSheet, Text, View, Pressable } from 'react-native';
+import { 
+  Camera, 
+  useCameraDevice, 
+  useCameraPermission, 
+  useFrameProcessor, 
+  runAtTargetFps 
+} from 'react-native-vision-camera';
 import { useTensorflowModel } from 'react-native-fast-tflite';
-
-// --- Fonction utilitaire pour convertir base64 en données binaires (Uint8Array) ---
-// C'est le format attendu par les modèles TFLite quantifiés (int8)
-const base64CharToIndexMap: Record<string, number> = {};
-const base64Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-for (let i = 0; i < base64Chars.length; i++) {
-  base64CharToIndexMap[base64Chars[i]] = i;
-}
-
-function base64ToUint8Array(base64: string): Uint8Array {
-  // Nettoyage rapide si header présent
-  const cleanBase64 = base64.replace(/^data:image\/\w+;base64,/, "");
-  const padding = '='.repeat((4 - (cleanBase64.length % 4)) % 4);
-  const base64WithPadding = cleanBase64 + padding;
-  const length = (base64WithPadding.length / 4) * 3;
-  const array = new Uint8Array(length);
-  let arrayIndex = 0;
-
-  for (let i = 0; i < base64WithPadding.length; i += 4) {
-    const c1 = base64CharToIndexMap[base64WithPadding[i]];
-    const c2 = base64CharToIndexMap[base64WithPadding[i + 1]];
-    const c3 = base64CharToIndexMap[base64WithPadding[i + 2]];
-    const c4 = base64CharToIndexMap[base64WithPadding[i + 3]];
-
-    const b1 = (c1 << 2) | (c2 >> 4);
-    const b2 = ((c2 & 15) << 4) | (c3 >> 2);
-    const b3 = ((c3 & 3) << 6) | c4;
-
-    array[arrayIndex++] = b1;
-    if (base64WithPadding[i + 2] !== '=') array[arrayIndex++] = b2;
-    if (base64WithPadding[i + 3] !== '=') array[arrayIndex++] = b3;
-  }
-  // On retire le padding éventuel
-  let actualLength = length;
-  if (base64WithPadding.endsWith('==')) actualLength -= 2;
-  else if (base64WithPadding.endsWith('=')) actualLength -= 1;
-
-  return array.slice(0, actualLength);
-}
-// ----------------------------------------------------------------
+import { useResizePlugin } from 'vision-camera-resize-plugin';
+import { Worklets } from 'react-native-worklets-core';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Image } from "expo-image"; // Assure-toi d'avoir installé expo-image
+import * as ImagePicker from 'expo-image-picker';
 
 export default function CameraScreen() {
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
-  const [type, setType] = useState<CameraType>("back");
-  const [flash, setFlash] = useState<FlashMode>("off");
+  // --- PERMISSIONS & CONFIG CAMÉRA ---
+  const { hasPermission, requestPermission } = useCameraPermission();
+  const [cameraPosition, setCameraPosition] = useState<'back' | 'front'>('back');
+  const device = useCameraDevice(cameraPosition);
+  const [flash, setFlash] = useState<'off' | 'on'>('off');
+
+  // --- CHARGEMENT DU MODÈLE ---
+  const objectDetection = useTensorflowModel(require("../../assets/models/best_int8.tflite"));
+  const model = objectDetection.model;
+
+  // --- ÉTATS UI ---
+  const [detectionLabel, setDetectionLabel] = useState<string>(""); 
+  const [detectionScore, setDetectionScore] = useState<string>(""); 
+  const [capturedImage, setCapturedImage] = useState<string | null>(null);
   
-  const ref = useRef<CameraView>(null);
-  const isProcessing = useRef(false);
+  const { resize } = useResizePlugin();
   
-  const [uri, setUri] = useState<string | null>(null);
-  const [mode] = useState<CameraMode>("picture");
-  const [result, setResult] = useState<string>("Chargement modèle...");
+  // --- LISTE DES CLASSES (DYNAMIQUE) ---
+  // Tu peux ajouter des animaux ici sans toucher au reste du code
+  const labels = useMemo(() => ["Chat", "Cheval", "Chèvre"], []);
 
-  // 1. Chargement du modèle TFLite via le hook
-  const model = useTensorflowModel(require("../../assets/models/best_int8.tflite"));
-  // const model = useTensorflowModel({ url: "https://tes-assets-en-ligne/best_int8.tflite" }); // Alternative si en ligne
+  useEffect(() => { requestPermission(); }, []);
 
-  // Labels (DOIT correspondre exactement à l'entraînement de ton modèle)
-  const labels = useMemo(() => ["Chat", "Chien", "Lion", "Humain"], []);
+  // --- MISE À JOUR UI (WORKLET -> JS) ---
+  const updateResultOnJS = Worklets.createRunOnJS((label: string, score: string) => {
+    setDetectionLabel(label);
+    setDetectionScore(score);
+  });
 
-  useEffect(() => {
-    (async () => {
-      const { status } = await Camera.requestCameraPermissionsAsync();
-      setHasPermission(status === 'granted');
-    })();
-  }, []);
+  // --- FRAME PROCESSOR ---
+  const frameProcessor = useFrameProcessor((frame) => {
+    'worklet';
+    if (model == null) return;
 
-  useEffect(() => {
-    if (model.state === "loading") setResult("Chargement modèle...");
-    if (model.state === "error") setResult("Erreur modèle !");
-    if (model.state === "loaded") setResult("Modèle prêt. Détection...");
-  }, [model.state]);
+    // Limite à 5 FPS pour ne pas surchauffer le téléphone
+    runAtTargetFps(5, () => {
+      
+      // 1. Prétraitement de l'image
+      const resized = resize(frame, {
+        scale: { width: 640, height: 640 },
+        pixelFormat: 'rgb',
+        dataType: 'float32', // IMPORTANT : float32 aide souvent à normaliser les entrées uint8
+      });
 
+      // 2. Exécution du modèle
+      const outputs = model.runSync([resized]);
+      const data = outputs[0];
 
-  // 2. Détection en continu sur la caméra
-  useEffect(() => {
-    // On ne lance la boucle que si le modèle est bien chargé
-    if (model.state !== "loaded" || !model.model || !ref.current) return;
+      if (data) {
+        // Configuration YOLOv8 standard
+        const numAnchors = 8400; 
+        const numClass = labels.length; // S'adapte à ta liste (ici 3)
 
-    const interval = setInterval(async () => {
-      if (isProcessing.current) return;
-      isProcessing.current = true;
+        let maxScore = 0;
+        let maxClassIndex = -1;
 
-      try {
-        // A. Prendre la photo
-        const photo = await ref.current.takePictureAsync({ 
-            skipProcessing: true,
-            shutterSound: false
-        });
+        // BOUCLE DYNAMIQUE
+        // On parcourt les 8400 boîtes potentielles
+        for (let i = 0; i < numAnchors; i++) {
+            
+            let currentMaxForBox = 0;
+            let currentClassForBox = -1;
 
-        if (!photo?.uri) { throw new Error("Pas d'URI photo"); }
+            // On vérifie chaque animal pour cette boîte
+            for (let c = 0; c < numClass; c++) {
+                // Les classes commencent à la ligne 4 (après x, y, w, h)
+                // Index = (Ligne * Largeur) + Colonne
+                const classRow = 4 + c; 
+                const index = classRow * numAnchors + i;
 
-        // B. REDIMENSIONNER l'image (Crucial pour TFLite)
-        // Ton modèle YOLO attend probablement du 640x640. Adapte ces valeurs si besoin.
-        const manipResult = await ImageManipulator.manipulateAsync(
-            photo.uri,
-            [{ resize: { width: 640, height: 640 } }],
-            { base64: true, format: ImageManipulator.SaveFormat.JPEG }
-        );
+                // Lecture du score
+                // @ts-ignore
+                const score = Number(data[index]);
 
-        if (!manipResult.base64) { throw new Error("Échec manipulation image"); }
+                if (score > currentMaxForBox) {
+                    currentMaxForBox = score;
+                    currentClassForBox = c;
+                }
+            }
 
-        // C. Convertir base64 en tableau d'octets (Uint8Array) pour le modèle int8
-        const inputData = base64ToUint8Array(manipResult.base64);
-
-        // D. Exécuter le modèle (Inférence)
-        // runSync est bloquant mais rapide pour TFLite.
-        const outputs = model.model.runSync([inputData]);
-        
-        // E. Analyser la sortie
-        // outputs[0] est le premier tensor de sortie. Sa structure dépend de ton modèle.
-        // Pour un modèle de classification simple, c'est souvent un tableau de probabilités.
-        const outputArray = outputs[0] as Float32Array | Uint8Array;
-
-        let maxScore = -Infinity;
-        let maxIndex = -1;
-
-        // Trouver le meilleur score
-        for (let i = 0; i < outputArray.length; i++) {
-            // Si c'est du Uint8 (0-255), on convertit parfois en float (0.0-1.0) selon le modèle
-            const score = outputArray[i];
-            if (score > maxScore) {
-                maxScore = score;
-                maxIndex = i;
+            // Si cette boîte est la meilleure de toute l'image jusqu'à présent
+            if (currentMaxForBox > maxScore) {
+                maxScore = currentMaxForBox;
+                maxClassIndex = currentClassForBox;
             }
         }
 
-        const detectedLabel = labels[maxIndex] || "Inconnu";
-        // Affichage du score (si uint8, peut-être diviser par 255 pour avoir un %)
-        const scoreDisplay = (maxScore).toFixed(0); 
+        // --- NORMALISATION ---
+        // Si le modèle sort du 0-255 (int8), on remet en %
+        if (maxScore > 1) maxScore = maxScore / 255.0;
 
-        setResult(`${detectedLabel} (Score: ${scoreDisplay})`);
-
-      } catch (e) {
-        console.log("Erreur inference TFLite:", e);
-      } finally {
-        isProcessing.current = false;
+        // --- SEUIL DE CONFIANCE ---
+        // On n'affiche que si on est sûr à plus de 45%
+        if (maxScore > 0) {
+            const labelStr = labels[maxClassIndex] ?? "Inconnu";
+            const scoreStr = (maxScore * 100).toFixed(0) + "%";
+            updateResultOnJS(labelStr, scoreStr);
+        } else {
+             // Si rien n'est détecté ou score trop bas
+             updateResultOnJS("", "");
+        }
       }
-    // Intervalle un peu plus long car le resize prend du temps
-    }, 1500); 
+    });
+  }, [model, labels]);
 
-    return () => clearInterval(interval);
-  }, [model.state, model.model]); // Dépendances mises à jour
-
-  if (hasPermission === null) return <Text>Demande de permission...</Text>;
-  if (hasPermission === false) return <Text>Permission refusée à la caméra.</Text>;
-
-  const switchCamera = () => {
-    setType((prevType) => (prevType === "back" ? "front" : "back"));
-  }
-
-  const flashCamera = () => {
-    setFlash((prevFlash) => (prevFlash === "off" ? "on" : "off"));
-  };
-
+  // --- FONCTIONS PHOTO ---
+  const cameraRef = useRef<Camera>(null);
+  
   const takePicture = async () => {
-    if (ref.current) {
-        const photo = await ref.current.takePictureAsync();
-        if (photo?.uri) setUri(photo.uri);
-    }
+    try {
+      if (cameraRef.current && device) {
+        const photo = await cameraRef.current.takePhoto({ flash: flash });
+        setCapturedImage("file://" + photo.path);
+      }
+    } catch (e) { console.log(e); }
   };
 
   const pickImage = async () => {
-    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (permissionResult.granted === false) {
-      alert("La permission d'accéder à la galerie est requise !");
-      return;
-    }
-    let result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: false, 
-      quality: 1,
-    });
-    if (!result.canceled && result.assets && result.assets.length > 0) {
-        setUri(result.assets[0].uri);
-    }
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images });
+    if (!res.canceled && res.assets[0].uri) setCapturedImage(res.assets[0].uri);
   };
 
-  // (Le reste du rendu UI est identique à avant, je l'ai gardé pour que le code soit complet)
-  const renderPicture = (uri: string) => (
-    <View style={{flex: 1, justifyContent: 'space-between', backgroundColor: 'black'}}>
-      <View style={{ marginTop: 50 }}>
-        <Image
-          source={{ uri }}
-          contentFit="contain"
-          style={{ width: "100%", height: "80%" }}
-        />
-        <Text style={{ padding: 10, fontSize: 18, color: 'white', textAlign: 'center' }}>
-           Dernière détection : {result}
-        </Text>
-      </View>
-
-      <Pressable
-        style={{ marginBottom: 30, marginHorizontal: 20, padding: 15, backgroundColor: 'white', borderRadius: 10 }}
-        onPress={() => setUri(null)} 
-      >
-        <Text style={{ textAlign: 'center', fontWeight: 'bold' }}>
-          Prendre une nouvelle photo
-        </Text>
-      </Pressable>
+  // --- UI COMPONENTS ---
+  const ResultOverlay = () => (
+    <View style={styles.overlay}>
+       {detectionLabel ? (
+          <>
+            <Text style={styles.labelText}>{detectionLabel}</Text>
+            <Text style={styles.scoreText}>{detectionScore}</Text>
+          </>
+       ) : (
+          <Text style={[styles.scoreText, {fontSize: 16, color: '#aaa'}]}>Recherche...</Text>
+       )}
     </View>
   );
 
-  const renderCamera = () => (
-    <View style={styles.container}>
-      <CameraView style={styles.camera}  
-        ref={ref}
-        mode={mode}
-        facing={type}
-        flash={flash}
-        mute={true}
-        responsiveOrientationWhenOrientationLocked
-      />
-
-      <View style={styles.topControls}>
-          <Pressable onPress={flashCamera} style={styles.flashButton}>
-            <MaterialCommunityIcons
-              name={flash === "on" ? "flash" : "flash-off"} 
-              size={30}
-              color={flash === "on" ? "yellow" : "white"} 
-            />
-          </Pressable>
+  // --- AFFICHAGE IMAGE CAPTURÉE ---
+  if (capturedImage) {
+    return (
+      <View style={styles.container}>
+        <Image source={{ uri: capturedImage }} contentFit="contain" style={{ flex: 1 }} />
+        <ResultOverlay />
+        <Pressable onPress={() => setCapturedImage(null)} style={styles.closeBtn}>
+          <Text style={styles.btnText}>Retour Caméra</Text>
+        </Pressable>
       </View>
+    );
+  }
 
-      <View style={styles.bottomControls}>
-          <Pressable onPress={pickImage} style={styles.iconButton}>
-              <MaterialCommunityIcons name="image-multiple" size={30} color="white" />
-          </Pressable>
+  // --- CHARGEMENT / PERMISSIONS ---
+  if (!hasPermission || !device) return <View style={styles.center}><Text style={{color:'white'}}>Chargement...</Text></View>;
 
-        <Pressable onPress={takePicture}>
-            {({ pressed }) => (
-              <View style={[styles.shutterBtn, { opacity: pressed ? 0.5 : 1 }]}>
-                <View style={[styles.shutterBtnInner, { backgroundColor: mode === "picture" ? "white" : "red" }]} />
-              </View>
-            )}
-          </Pressable>
-
-          <Pressable onPress={switchCamera} style={styles.iconButton}>
-              <MaterialCommunityIcons name="cached" size={30} color="white" />
-          </Pressable>
-      </View>
-
-      <View style={styles.resultContainer}>
-        <Text style={styles.resultText}>{result}</Text>
-      </View>
-    </View>
-  );
-
+  // --- VUE CAMÉRA PRINCIPALE ---
   return (
     <View style={styles.container}>
-      {uri ? renderPicture(uri) : renderCamera()}
+      <Camera
+        ref={cameraRef}
+        style={StyleSheet.absoluteFill}
+        device={device}
+        isActive={true}
+        frameProcessor={frameProcessor}
+        pixelFormat="yuv"
+        photo={true}
+      />
+      
+      <ResultOverlay />
+      
+      <View style={styles.controls}>
+        <Pressable onPress={pickImage} style={styles.roundBtn}>
+          <MaterialCommunityIcons name="image" size={28} color="white" />
+        </Pressable>
+        
+        <Pressable onPress={takePicture}>
+          {({ pressed }) => (
+             <View style={[styles.shutterOuter, { opacity: pressed ? 0.5 : 1 }]}>
+               <View style={styles.shutterInner} />
+             </View>
+          )}
+        </Pressable>
+        
+        <Pressable onPress={() => setCameraPosition(p => p === 'back' ? 'front' : 'back')} style={styles.roundBtn}>
+          <MaterialCommunityIcons name="camera-flip" size={28} color="white" />
+        </Pressable>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: 'black' },
-  camera: { flex: 1 },
-  topControls: {
-    position: 'absolute',
-    top: 60,
-    left: 20,
-    zIndex: 10,
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'black' },
+  overlay: {
+    position: 'absolute', top: 120, alignSelf: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12, alignItems: 'center', zIndex: 10
   },
-  flashButton: {
-    padding: 10,
-    borderRadius: 50,
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-    alignItems: 'center',
-    justifyContent: 'center',
+  labelText: { color: '#00ff00', fontSize: 32, fontWeight: 'bold', textTransform: 'uppercase' },
+  scoreText: { color: 'white', fontSize: 24, fontWeight: 'bold' },
+  controls: {
+    position: 'absolute', bottom: 40, flexDirection: 'row', width: '100%',
+    justifyContent: 'space-around', alignItems: 'center', zIndex: 10
   },
-  bottomControls: {
-    position: 'absolute',
-    flexDirection: 'row', 
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    width: '100%', 
-    paddingHorizontal: 30,
-    bottom: 50,
-  },
-  iconButton: {
-      padding: 12,
-      borderRadius: 50, 
-      backgroundColor: 'rgba(0, 0, 0, 0.4)',
-      alignItems: 'center',
-      justifyContent: 'center',
-  },
-  shutterBtn: {
-    backgroundColor: "transparent",
-    borderWidth: 5,
-    borderColor: "white",
-    width: 80,
-    height: 80,
-    borderRadius: 45,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  shutterBtnInner: {
-    width: 65,
-    height: 65,
-    borderRadius: 50,
-  },
-  resultContainer: {
-    position: 'absolute',
-    top: 120,
-    alignSelf: 'center',
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 20,
-  },
-  resultText: {
-    color: '#00ff00',
-    fontSize: 20,
-    fontWeight: 'bold',
-    textTransform: 'uppercase',
-  }
+  roundBtn: { padding: 12, backgroundColor: 'rgba(50,50,50,0.7)', borderRadius: 50 },
+  shutterOuter: { width: 70, height: 70, borderRadius: 35, borderWidth: 4, borderColor: 'white', justifyContent: 'center', alignItems: 'center' },
+  shutterInner: { width: 56, height: 56, borderRadius: 28, backgroundColor: 'white' },
+  closeBtn: { position: 'absolute', bottom: 50, alignSelf: 'center', backgroundColor: 'white', padding: 15, borderRadius: 10, zIndex: 20 },
+  btnText: { fontWeight: 'bold', color: 'black' }
 });

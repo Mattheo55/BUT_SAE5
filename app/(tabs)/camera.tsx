@@ -1,128 +1,122 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { StyleSheet, Text, View, Pressable } from 'react-native';
-import { 
-  Camera, 
-  useCameraDevice, 
-  useCameraPermission, 
-  useFrameProcessor, 
-  runAtTargetFps 
-} from 'react-native-vision-camera';
-import { useTensorflowModel } from 'react-native-fast-tflite';
-import { useResizePlugin } from 'vision-camera-resize-plugin';
-import { Worklets } from 'react-native-worklets-core';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Image } from "expo-image"; // Assure-toi d'avoir installé expo-image
+import { Image } from "expo-image";
 import * as ImagePicker from 'expo-image-picker';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTensorflowModel } from 'react-native-fast-tflite';
+import {
+  Camera,
+  runAtTargetFps,
+  useCameraDevice,
+  useCameraPermission,
+  useFrameProcessor
+} from 'react-native-vision-camera';
+import { Worklets } from 'react-native-worklets-core';
+import { useResizePlugin } from 'vision-camera-resize-plugin';
 
 export default function CameraScreen() {
-  // --- PERMISSIONS & CONFIG CAMÉRA ---
   const { hasPermission, requestPermission } = useCameraPermission();
   const [cameraPosition, setCameraPosition] = useState<'back' | 'front'>('back');
   const device = useCameraDevice(cameraPosition);
   const [flash, setFlash] = useState<'off' | 'on'>('off');
 
-  // --- CHARGEMENT DU MODÈLE ---
-  const objectDetection = useTensorflowModel(require("../../assets/models/best_int8.tflite"));
-  const model = objectDetection.model;
-
-  // --- ÉTATS UI ---
+  // États UI
   const [detectionLabel, setDetectionLabel] = useState<string>(""); 
   const [detectionScore, setDetectionScore] = useState<string>(""); 
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
+
+  // --- CHARGEMENT DU NOUVEAU MODÈLE FLOAT32 ---
+  // Assure-toi que le fichier est bien dans assets/models/
+  const objectDetection = useTensorflowModel(require("../../assets/models/best_float32.tflite"));
+  const model = objectDetection.model;
   
   const { resize } = useResizePlugin();
   
-  // --- LISTE DES CLASSES (DYNAMIQUE) ---
-  // Tu peux ajouter des animaux ici sans toucher au reste du code
-  const labels = useMemo(() => ["Chat", "Cheval", "Chèvre"], []);
+  // Tes 15 classes
+  const labels = useMemo(() => [
+      'Bear', 'Cheetah', "Crocodile", 'Elephant', 'Fox', 
+      'Giraffe', 'Hedgehog', 'Human', 'Leopard', 'Lion', 
+      'Lynx', 'Ostrich', 'Rhinoceros', 'Tiger', 'Zebra'
+  ], []);
 
   useEffect(() => { requestPermission(); }, []);
 
-  // --- MISE À JOUR UI (WORKLET -> JS) ---
   const updateResultOnJS = Worklets.createRunOnJS((label: string, score: string) => {
     setDetectionLabel(label);
     setDetectionScore(score);
   });
 
-  // --- FRAME PROCESSOR ---
   const frameProcessor = useFrameProcessor((frame) => {
     'worklet';
     if (model == null) return;
 
-    // Limite à 5 FPS pour ne pas surchauffer le téléphone
-    runAtTargetFps(5, () => {
+    // Analyse fluide à 10 FPS (Float32 est rapide)
+    runAtTargetFps(10, () => {
+      'worklet';
       
-      // 1. Prétraitement de l'image
+      // 1. Prétraitement STANDARD (Float32)
+      // C'est la config idéale : pas de conversion bizarre.
       const resized = resize(frame, {
         scale: { width: 640, height: 640 },
         pixelFormat: 'rgb',
-        dataType: 'float32', // IMPORTANT : float32 aide souvent à normaliser les entrées uint8
+        dataType: 'float32', 
       });
 
-      // 2. Exécution du modèle
+      // 2. Exécution
       const outputs = model.runSync([resized]);
-      const data = outputs[0];
+      const data = outputs[0]; // C'est maintenant un Float32Array (valeurs 0.0 à 1.0)
 
       if (data) {
-        // Configuration YOLOv8 standard
         const numAnchors = 8400; 
-        const numClass = labels.length; // S'adapte à ta liste (ici 3)
+        const numClass = 15;
+        
+        // Initialisation à 0 (0% de confiance)
+        let bestScore = 0; 
+        let bestClassIdx = -1;
 
-        let maxScore = 0;
-        let maxClassIndex = -1;
-
-        // BOUCLE DYNAMIQUE
-        // On parcourt les 8400 boîtes potentielles
+        // 3. BOUCLE DE LECTURE [19, 8400]
+        // On parcourt les 8400 boîtes
         for (let i = 0; i < numAnchors; i++) {
             
-            let currentMaxForBox = 0;
-            let currentClassForBox = -1;
-
-            // On vérifie chaque animal pour cette boîte
+            // Pour chaque boîte, on scanne les 15 classes
             for (let c = 0; c < numClass; c++) {
-                // Les classes commencent à la ligne 4 (après x, y, w, h)
-                // Index = (Ligne * Largeur) + Colonne
-                const classRow = 4 + c; 
-                const index = classRow * numAnchors + i;
-
-                // Lecture du score
+                
+                // Formule pour lire "Channel First"
+                // Ligne 0-3 : Coordonnées
+                // Ligne 4 : Score Classe 0
+                // Ligne 5 : Score Classe 1 ...
+                const row = 4 + c; 
+                const offset = (row * numAnchors) + i;
+                
+                // Lecture directe (C'est déjà un float entre 0 et 1 !)
                 // @ts-ignore
-                const score = Number(data[index]);
+                const score = Number(data[offset]); 
 
-                if (score > currentMaxForBox) {
-                    currentMaxForBox = score;
-                    currentClassForBox = c;
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestClassIdx = c;
                 }
-            }
-
-            // Si cette boîte est la meilleure de toute l'image jusqu'à présent
-            if (currentMaxForBox > maxScore) {
-                maxScore = currentMaxForBox;
-                maxClassIndex = currentClassForBox;
             }
         }
 
-        // --- NORMALISATION ---
-        // Si le modèle sort du 0-255 (int8), on remet en %
-        if (maxScore > 1) maxScore = maxScore / 255.0;
-
-        // --- SEUIL DE CONFIANCE ---
-        // On n'affiche que si on est sûr à plus de 45%
-        if (maxScore > 0) {
-            const labelStr = labels[maxClassIndex] ?? "Inconnu";
-            const scoreStr = (maxScore * 100).toFixed(0) + "%";
+        // 4. RÉSULTAT
+        // Seuil de confiance : 50% (0.5)
+        if (bestScore > 0.50) {
+            const labelStr = labels[bestClassIdx] ?? "Inconnu";
+            // Conversion simple pour l'affichage
+            const scoreStr = (bestScore * 100).toFixed(0) + "%";
             updateResultOnJS(labelStr, scoreStr);
         } else {
-             // Si rien n'est détecté ou score trop bas
-             updateResultOnJS("", "");
+            // Si le meilleur score est faible, on vide l'affichage
+            updateResultOnJS("", "");
         }
       }
     });
   }, [model, labels]);
 
-  // --- FONCTIONS PHOTO ---
+  // --- RESTE DU CODE (Capture, UI...) ---
   const cameraRef = useRef<Camera>(null);
-  
+
   const takePicture = async () => {
     try {
       if (cameraRef.current && device) {
@@ -133,11 +127,12 @@ export default function CameraScreen() {
   };
 
   const pickImage = async () => {
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images });
+    const res = await ImagePicker.launchImageLibraryAsync({ 
+        mediaTypes: ImagePicker.MediaTypeOptions.Images 
+    });
     if (!res.canceled && res.assets[0].uri) setCapturedImage(res.assets[0].uri);
   };
 
-  // --- UI COMPONENTS ---
   const ResultOverlay = () => (
     <View style={styles.overlay}>
        {detectionLabel ? (
@@ -151,7 +146,6 @@ export default function CameraScreen() {
     </View>
   );
 
-  // --- AFFICHAGE IMAGE CAPTURÉE ---
   if (capturedImage) {
     return (
       <View style={styles.container}>
@@ -164,10 +158,8 @@ export default function CameraScreen() {
     );
   }
 
-  // --- CHARGEMENT / PERMISSIONS ---
   if (!hasPermission || !device) return <View style={styles.center}><Text style={{color:'white'}}>Chargement...</Text></View>;
 
-  // --- VUE CAMÉRA PRINCIPALE ---
   return (
     <View style={styles.container}>
       <Camera
@@ -186,7 +178,6 @@ export default function CameraScreen() {
         <Pressable onPress={pickImage} style={styles.roundBtn}>
           <MaterialCommunityIcons name="image" size={28} color="white" />
         </Pressable>
-        
         <Pressable onPress={takePicture}>
           {({ pressed }) => (
              <View style={[styles.shutterOuter, { opacity: pressed ? 0.5 : 1 }]}>
@@ -194,7 +185,6 @@ export default function CameraScreen() {
              </View>
           )}
         </Pressable>
-        
         <Pressable onPress={() => setCameraPosition(p => p === 'back' ? 'front' : 'back')} style={styles.roundBtn}>
           <MaterialCommunityIcons name="camera-flip" size={28} color="white" />
         </Pressable>

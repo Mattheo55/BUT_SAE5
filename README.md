@@ -2,8 +2,6 @@
 
 Réaliser par Matthéo Bigorgne, Thibaut Jantzen, Maxence Venner et Maksim Kurlukov.
 
-# L'ia
-
 ## Le modèle :
 
 Notre modèle à été fait avec YOLO V11, qui est l'un des meilleurs algorithme de détection d'objet, c'est nottement la dernière version sortie pas ultralytics. Cet algorithme à plusieur avantages :

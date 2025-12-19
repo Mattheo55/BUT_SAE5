@@ -1,8 +1,8 @@
-import React, { useMemo } from 'react';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Dimensions, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
+import React, { useMemo } from 'react';
+import { Dimensions, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 type Vignette = {
   id: string;

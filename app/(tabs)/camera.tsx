@@ -1,9 +1,9 @@
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import React, { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Image, Pressable, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useTensorflowModel } from 'react-native-fast-tflite';
 import {
   Camera,
+  CameraPosition,
   runAtTargetFps,
   useCameraDevice,
   useCameraPermission,
@@ -14,17 +14,24 @@ import { useResizePlugin } from 'vision-camera-resize-plugin';
 
 export default function CameraScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
-  const device = useCameraDevice('back');
   
+  const [cameraPosition, setCameraPosition] = useState<CameraPosition>('back');
+  
+  const [flash, setFlash] = useState<'off' | 'on'>('off');
+
+  const device = useCameraDevice(cameraPosition);
+  
+  const cameraRef = useRef<Camera>(null);
+
   const [detectionLabel, setDetectionLabel] = useState<string>(""); 
   const [detectionScore, setDetectionScore] = useState<string>(""); 
+  const [uri, setUri] = useState<string | null>(null);
+  const [capturedResult, setCapturedResult] = useState<{label: string, score: string} | null>(null);
 
-  // Chargement du modèle Float16 (plus stable et précis)
   const objectDetection = useTensorflowModel(require("../../assets/models/best_float16.tflite"));
   const model = objectDetection.model;
   const { resize } = useResizePlugin();
 
-  // Verrou pour empêcher l'IA de saturer le processeur
   const isBusy = useSharedValue(false);
   
   const labels = useMemo(() => [
@@ -33,7 +40,6 @@ export default function CameraScreen() {
       'Lynx', 'Autruche', 'Rhinocéros', 'Tigre', 'Zèbre'
   ], []);
 
-  // Format 720p à 30fps maximum pour limiter la chauffe
   const format = useMemo(() => {
     if (!device) return undefined;
     return device.formats.find(f => 
@@ -48,13 +54,45 @@ export default function CameraScreen() {
     setDetectionScore(score);
   });
 
+  const toggleCamera = () => {
+    setCameraPosition((current) => (current === 'back' ? 'front' : 'back'));
+  };
+
+  const toggleFlash = () => {
+    setFlash((current) => (current === 'off' ? 'on' : 'off'));
+  };
+
+  const takePicture = async () => {
+    try {
+      setCapturedResult({
+        label: detectionLabel,
+        score: detectionScore
+      });
+
+      if (cameraRef.current) {
+        const photo = await cameraRef.current.takePhoto({
+          flash: flash, 
+          enableShutterSound: true
+        });
+        
+        if (photo && photo.path) {
+          setUri(`file://${photo.path}`);
+        }
+      }
+    } catch (error) {
+      console.error("Erreur prise photo:", error);
+    }
+  };
+
+  const closePhoto = () => {
+    setUri(null);
+    setCapturedResult(null);
+  };
+
   const frameProcessor = useFrameProcessor((frame) => {
     'worklet';
-    
-    // Si le modèle n'est pas prêt ou déjà occupé, on ne fait rien
     if (model == null || isBusy.value) return;
 
-    // ANALYSE 1 FOIS PAR SECONDE : Laisse le CPU respirer (idéal si partage de connexion actif)
     runAtTargetFps(1, () => {
       'worklet';
       isBusy.value = true; 
@@ -72,15 +110,13 @@ export default function CameraScreen() {
         if (data && data.length > 0) {
           const numAnchors = 8400;
           const numClass = 15;
-          
-          let bestScore = 0.55; // Seuil de confiance à 55%
+          let bestScore = 0.55; 
           let bestClassIdx = -1;
 
-          // Parcours optimisé du tenseur de sortie YOLOv11
           for (let c = 0; c < numClass; c++) {
             const rowOffset = (4 + c) * numAnchors;
             for (let i = 0; i < numAnchors; i++) {
-              const score = data[rowOffset + i] as unknown as number;
+              const score = (data as any)[rowOffset + i];
               if (score > bestScore) {
                 bestScore = score;
                 bestClassIdx = c;
@@ -96,29 +132,55 @@ export default function CameraScreen() {
           }
         }
       } catch (e) {
-        // Erreur ignorée pour la fluidité
+        console.log("Error frameprocessor", e);
       } finally {
-        isBusy.value = false; // Libère le verrou pour la seconde suivante
+        isBusy.value = false;
       }
     });
   }, [model, labels]);
+
+  if (uri) {
+    return (
+      <View style={styles.center}>
+        <Text style={{ color: 'white', marginBottom: 20, fontSize: 18 }}>Photo prise :</Text>
+        <Image source={{ uri: uri }} style={{ width: '90%', height: '60%', borderRadius: 10 }} resizeMode="contain" />
+        <View style={styles.resultContainer}>
+            {capturedResult && capturedResult.label ? (
+                <Text style={styles.finalResultText}>C'est un {capturedResult.label} ({capturedResult.score}) !</Text>
+            ) : (
+                <Text style={styles.finalResultText}>Aucun animal identifié.</Text>
+            )}
+        </View>
+        <TouchableOpacity onPress={closePhoto} style={styles.btnRetour}>
+            <Text style={styles.textBtn}>Prendre une autre photo</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   if (!hasPermission || !device) return <View style={styles.center}><Text style={styles.whiteText}>Chargement...</Text></View>;
 
   return (
     <View style={styles.container}>
+      <StatusBar barStyle="light-content" />
       <Camera
+        ref={cameraRef}
         style={StyleSheet.absoluteFill}
         device={device}
-        isActive={true}
+        isActive={!uri}
         format={format}
         frameProcessor={frameProcessor}
         pixelFormat="yuv"
-        videoStabilizationMode="off" // Très important pour économiser le CPU
-        enableZoomGesture={false}
-        photo={false}
+        videoStabilizationMode="off" 
+        photo={true}
       />
       
+      {device.hasFlash && (
+        <TouchableOpacity style={styles.flashButton} onPress={toggleFlash}>
+             <Text style={styles.iconText}>{flash === 'on' ? '⚡️' : '🚫'}</Text>
+        </TouchableOpacity>
+      )}
+
       <View style={styles.overlay}>
          {detectionLabel ? (
             <View style={styles.resultCard}>
@@ -127,13 +189,23 @@ export default function CameraScreen() {
             </View>
          ) : (
             <View style={styles.searchingBox}>
-                <Text style={styles.searchingText}>Analyse intelligente...</Text>
+                <Text style={styles.searchingText}>Recherche...</Text>
             </View>
          )}
       </View>
 
       <View style={styles.controls}>
-        <View style={styles.shutterOuter}><View style={styles.shutterInner} /></View>
+        <View style={{width: 60}} /> 
+
+        <Pressable onPress={takePicture}>
+           <View style={styles.shutterOuter}>
+             <View style={styles.shutterInner} />
+           </View>
+        </Pressable>
+
+        <TouchableOpacity style={styles.flipButton} onPress={toggleCamera}>
+            <Text style={styles.iconText}>🔄</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -146,18 +218,45 @@ const styles = StyleSheet.create({
   overlay: { position: 'absolute', top: 100, alignSelf: 'center', zIndex: 10, alignItems: 'center' },
   resultCard: { 
     backgroundColor: 'rgba(0,255,0,0.3)', 
-    paddingHorizontal: 35, 
-    paddingVertical: 20, 
-    borderRadius: 25, 
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#00ff00'
+    paddingHorizontal: 35, paddingVertical: 20, borderRadius: 25, 
+    alignItems: 'center', borderWidth: 2, borderColor: '#00ff00'
   },
   searchingBox: { backgroundColor: 'rgba(0,0,0,0.6)', padding: 15, borderRadius: 15 },
   labelText: { color: '#00ff00', fontSize: 36, fontWeight: '900', textTransform: 'uppercase' },
   scoreText: { color: 'white', fontSize: 20, fontWeight: 'bold' },
   searchingText: { color: '#aaa', fontSize: 16, fontWeight: 'bold' },
-  controls: { position: 'absolute', bottom: 50, width: '100%', alignItems: 'center' },
+  
+  controls: { 
+      position: 'absolute', 
+      bottom: 50, 
+      width: '100%', 
+      flexDirection: 'row',
+      justifyContent: 'space-evenly',
+      alignItems: 'center' 
+  },
+  
   shutterOuter: { width: 80, height: 80, borderRadius: 40, borderWidth: 4, borderColor: 'white', justifyContent: 'center', alignItems: 'center' },
-  shutterInner: { width: 60, height: 60, borderRadius: 30, backgroundColor: 'white' }
+  shutterInner: { width: 60, height: 60, borderRadius: 30, backgroundColor: 'white' },
+  
+  flashButton: {
+    position: 'absolute',
+    top: 60,
+    left: 30,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    width: 50, height: 50,
+    borderRadius: 25,
+    justifyContent: 'center', alignItems: 'center'
+  },
+  flipButton: {
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    width: 60, height: 60,
+    borderRadius: 30,
+    justifyContent: 'center', alignItems: 'center'
+  },
+  iconText: { fontSize: 24 },
+
+  btnRetour: { marginTop: 30, padding: 15, backgroundColor: 'white', borderRadius: 10 },
+  textBtn: { color: 'black', fontWeight: 'bold' },
+  resultContainer: { marginTop: 20, alignItems: 'center' },
+  finalResultText: { color: '#00ff00', fontSize: 22, fontWeight: 'bold', textAlign: 'center' }
 });

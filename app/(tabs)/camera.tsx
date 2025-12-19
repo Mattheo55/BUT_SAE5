@@ -1,8 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Image } from "expo-image";
-import * as ImagePicker from 'expo-image-picker';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 import { useTensorflowModel } from 'react-native-fast-tflite';
 import {
   Camera,
@@ -11,35 +9,39 @@ import {
   useCameraPermission,
   useFrameProcessor
 } from 'react-native-vision-camera';
-import { Worklets } from 'react-native-worklets-core';
+import { Worklets, useSharedValue } from 'react-native-worklets-core';
 import { useResizePlugin } from 'vision-camera-resize-plugin';
 
 export default function CameraScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
-  const [cameraPosition, setCameraPosition] = useState<'back' | 'front'>('back');
-  const device = useCameraDevice(cameraPosition);
-  const [flash, setFlash] = useState<'off' | 'on'>('off');
-
-  // États UI
+  const device = useCameraDevice('back');
+  
   const [detectionLabel, setDetectionLabel] = useState<string>(""); 
   const [detectionScore, setDetectionScore] = useState<string>(""); 
-  const [capturedImage, setCapturedImage] = useState<string | null>(null);
 
-  // --- CHARGEMENT DU NOUVEAU MODÈLE FLOAT32 ---
-  // Assure-toi que le fichier est bien dans assets/models/
-  const objectDetection = useTensorflowModel(require("../../assets/models/best_float32.tflite"));
+  // Chargement du modèle Float16 (plus stable et précis)
+  const objectDetection = useTensorflowModel(require("../../assets/models/best_float16.tflite"));
   const model = objectDetection.model;
-  
   const { resize } = useResizePlugin();
+
+  // Verrou pour empêcher l'IA de saturer le processeur
+  const isBusy = useSharedValue(false);
   
-  // Tes 15 classes
   const labels = useMemo(() => [
-      'Bear', 'Cheetah', "Crocodile", 'Elephant', 'Fox', 
-      'Giraffe', 'Hedgehog', 'Human', 'Leopard', 'Lion', 
-      'Lynx', 'Ostrich', 'Rhinoceros', 'Tiger', 'Zebra'
+      'Ours', 'Guépard', "Crocodile", 'Éléphant', 'Renard', 
+      'Girafe', 'Hérisson', 'Humain', 'Léopard', 'Lion', 
+      'Lynx', 'Autruche', 'Rhinocéros', 'Tigre', 'Zèbre'
   ], []);
 
-  useEffect(() => { requestPermission(); }, []);
+  // Format 720p à 30fps maximum pour limiter la chauffe
+  const format = useMemo(() => {
+    if (!device) return undefined;
+    return device.formats.find(f => 
+      f.videoWidth === 1280 && f.videoHeight === 720 && f.maxFps <= 30
+    ) || device.formats[0];
+  }, [device]);
+
+  useEffect(() => { requestPermission(); }, [requestPermission]);
 
   const updateResultOnJS = Worklets.createRunOnJS((label: string, score: string) => {
     setDetectionLabel(label);
@@ -48,146 +50,90 @@ export default function CameraScreen() {
 
   const frameProcessor = useFrameProcessor((frame) => {
     'worklet';
-    if (model == null) return;
+    
+    // Si le modèle n'est pas prêt ou déjà occupé, on ne fait rien
+    if (model == null || isBusy.value) return;
 
-    // Analyse fluide à 10 FPS (Float32 est rapide)
-    runAtTargetFps(10, () => {
+    // ANALYSE 1 FOIS PAR SECONDE : Laisse le CPU respirer (idéal si partage de connexion actif)
+    runAtTargetFps(1, () => {
       'worklet';
-      
-      // 1. Prétraitement STANDARD (Float32)
-      // C'est la config idéale : pas de conversion bizarre.
-      const resized = resize(frame, {
-        scale: { width: 640, height: 640 },
-        pixelFormat: 'rgb',
-        dataType: 'float32', 
-      });
+      isBusy.value = true; 
 
-      // 2. Exécution
-      const outputs = model.runSync([resized]);
-      const data = outputs[0]; // C'est maintenant un Float32Array (valeurs 0.0 à 1.0)
+      try {
+        const resized = resize(frame, {
+          scale: { width: 640, height: 640 },
+          pixelFormat: 'rgb', 
+          dataType: 'float32', 
+        });
 
-      if (data) {
-        const numAnchors = 8400; 
-        const numClass = 15;
-        
-        // Initialisation à 0 (0% de confiance)
-        let bestScore = 0; 
-        let bestClassIdx = -1;
+        const outputs = model.runSync([resized]);
+        const data = outputs[0];
 
-        // 3. BOUCLE DE LECTURE [19, 8400]
-        // On parcourt les 8400 boîtes
-        for (let i = 0; i < numAnchors; i++) {
-            
-            // Pour chaque boîte, on scanne les 15 classes
-            for (let c = 0; c < numClass; c++) {
-                
-                // Formule pour lire "Channel First"
-                // Ligne 0-3 : Coordonnées
-                // Ligne 4 : Score Classe 0
-                // Ligne 5 : Score Classe 1 ...
-                const row = 4 + c; 
-                const offset = (row * numAnchors) + i;
-                
-                // Lecture directe (C'est déjà un float entre 0 et 1 !)
-                // @ts-ignore
-                const score = Number(data[offset]); 
+        if (data && data.length > 0) {
+          const numAnchors = 8400;
+          const numClass = 15;
+          
+          let bestScore = 0.55; // Seuil de confiance à 55%
+          let bestClassIdx = -1;
 
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestClassIdx = c;
-                }
+          // Parcours optimisé du tenseur de sortie YOLOv11
+          for (let c = 0; c < numClass; c++) {
+            const rowOffset = (4 + c) * numAnchors;
+            for (let i = 0; i < numAnchors; i++) {
+              const score = data[rowOffset + i] as unknown as number;
+              if (score > bestScore) {
+                bestScore = score;
+                bestClassIdx = c;
+              }
             }
-        }
+          }
 
-        // 4. RÉSULTAT
-        // Seuil de confiance : 50% (0.5)
-        if (bestScore > 0.50) {
-            const labelStr = labels[bestClassIdx] ?? "Inconnu";
-            // Conversion simple pour l'affichage
-            const scoreStr = (bestScore * 100).toFixed(0) + "%";
-            updateResultOnJS(labelStr, scoreStr);
-        } else {
-            // Si le meilleur score est faible, on vide l'affichage
+          if (bestClassIdx !== -1) { 
+            const labelStr = labels[bestClassIdx] ?? "Animal";
+            updateResultOnJS(labelStr, `${Math.round(bestScore * 100)}%`);
+          } else {
             updateResultOnJS("", "");
+          }
         }
+      } catch (e) {
+        // Erreur ignorée pour la fluidité
+      } finally {
+        isBusy.value = false; // Libère le verrou pour la seconde suivante
       }
     });
   }, [model, labels]);
 
-  // --- RESTE DU CODE (Capture, UI...) ---
-  const cameraRef = useRef<Camera>(null);
-
-  const takePicture = async () => {
-    try {
-      if (cameraRef.current && device) {
-        const photo = await cameraRef.current.takePhoto({ flash: flash });
-        setCapturedImage("file://" + photo.path);
-      }
-    } catch (e) { console.log(e); }
-  };
-
-  const pickImage = async () => {
-    const res = await ImagePicker.launchImageLibraryAsync({ 
-        mediaTypes: ImagePicker.MediaTypeOptions.Images 
-    });
-    if (!res.canceled && res.assets[0].uri) setCapturedImage(res.assets[0].uri);
-  };
-
-  const ResultOverlay = () => (
-    <View style={styles.overlay}>
-       {detectionLabel ? (
-          <>
-            <Text style={styles.labelText}>{detectionLabel}</Text>
-            <Text style={styles.scoreText}>{detectionScore}</Text>
-          </>
-       ) : (
-          <Text style={[styles.scoreText, {fontSize: 16, color: '#aaa'}]}>Recherche...</Text>
-       )}
-    </View>
-  );
-
-  if (capturedImage) {
-    return (
-      <View style={styles.container}>
-        <Image source={{ uri: capturedImage }} contentFit="contain" style={{ flex: 1 }} />
-        <ResultOverlay />
-        <Pressable onPress={() => setCapturedImage(null)} style={styles.closeBtn}>
-          <Text style={styles.btnText}>Retour Caméra</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  if (!hasPermission || !device) return <View style={styles.center}><Text style={{color:'white'}}>Chargement...</Text></View>;
+  if (!hasPermission || !device) return <View style={styles.center}><Text style={styles.whiteText}>Chargement...</Text></View>;
 
   return (
     <View style={styles.container}>
       <Camera
-        ref={cameraRef}
         style={StyleSheet.absoluteFill}
         device={device}
         isActive={true}
+        format={format}
         frameProcessor={frameProcessor}
         pixelFormat="yuv"
-        photo={true}
+        videoStabilizationMode="off" // Très important pour économiser le CPU
+        enableZoomGesture={false}
+        photo={false}
       />
       
-      <ResultOverlay />
-      
+      <View style={styles.overlay}>
+         {detectionLabel ? (
+            <View style={styles.resultCard}>
+              <Text style={styles.labelText}>{detectionLabel}</Text>
+              <Text style={styles.scoreText}>{detectionScore}</Text>
+            </View>
+         ) : (
+            <View style={styles.searchingBox}>
+                <Text style={styles.searchingText}>Analyse intelligente...</Text>
+            </View>
+         )}
+      </View>
+
       <View style={styles.controls}>
-        <Pressable onPress={pickImage} style={styles.roundBtn}>
-          <MaterialCommunityIcons name="image" size={28} color="white" />
-        </Pressable>
-        <Pressable onPress={takePicture}>
-          {({ pressed }) => (
-             <View style={[styles.shutterOuter, { opacity: pressed ? 0.5 : 1 }]}>
-               <View style={styles.shutterInner} />
-             </View>
-          )}
-        </Pressable>
-        <Pressable onPress={() => setCameraPosition(p => p === 'back' ? 'front' : 'back')} style={styles.roundBtn}>
-          <MaterialCommunityIcons name="camera-flip" size={28} color="white" />
-        </Pressable>
+        <View style={styles.shutterOuter}><View style={styles.shutterInner} /></View>
       </View>
     </View>
   );
@@ -196,19 +142,22 @@ export default function CameraScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: 'black' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'black' },
-  overlay: {
-    position: 'absolute', top: 120, alignSelf: 'center',
-    backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12, alignItems: 'center', zIndex: 10
+  whiteText: { color: 'white', fontWeight: 'bold' },
+  overlay: { position: 'absolute', top: 100, alignSelf: 'center', zIndex: 10, alignItems: 'center' },
+  resultCard: { 
+    backgroundColor: 'rgba(0,255,0,0.3)', 
+    paddingHorizontal: 35, 
+    paddingVertical: 20, 
+    borderRadius: 25, 
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#00ff00'
   },
-  labelText: { color: '#00ff00', fontSize: 32, fontWeight: 'bold', textTransform: 'uppercase' },
-  scoreText: { color: 'white', fontSize: 24, fontWeight: 'bold' },
-  controls: {
-    position: 'absolute', bottom: 40, flexDirection: 'row', width: '100%',
-    justifyContent: 'space-around', alignItems: 'center', zIndex: 10
-  },
-  roundBtn: { padding: 12, backgroundColor: 'rgba(50,50,50,0.7)', borderRadius: 50 },
-  shutterOuter: { width: 70, height: 70, borderRadius: 35, borderWidth: 4, borderColor: 'white', justifyContent: 'center', alignItems: 'center' },
-  shutterInner: { width: 56, height: 56, borderRadius: 28, backgroundColor: 'white' },
-  closeBtn: { position: 'absolute', bottom: 50, alignSelf: 'center', backgroundColor: 'white', padding: 15, borderRadius: 10, zIndex: 20 },
-  btnText: { fontWeight: 'bold', color: 'black' }
+  searchingBox: { backgroundColor: 'rgba(0,0,0,0.6)', padding: 15, borderRadius: 15 },
+  labelText: { color: '#00ff00', fontSize: 36, fontWeight: '900', textTransform: 'uppercase' },
+  scoreText: { color: 'white', fontSize: 20, fontWeight: 'bold' },
+  searchingText: { color: '#aaa', fontSize: 16, fontWeight: 'bold' },
+  controls: { position: 'absolute', bottom: 50, width: '100%', alignItems: 'center' },
+  shutterOuter: { width: 80, height: 80, borderRadius: 40, borderWidth: 4, borderColor: 'white', justifyContent: 'center', alignItems: 'center' },
+  shutterInner: { width: 60, height: 60, borderRadius: 30, backgroundColor: 'white' }
 });

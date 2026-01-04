@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router'
-import { Camera, History, House } from 'lucide-react-native'
+import { Camera, CircleUserRound, History, House } from 'lucide-react-native'
 import React from 'react'
 
 export default function _layout() {
@@ -11,7 +11,7 @@ export default function _layout() {
         <Tabs.Screen 
             name='index'
             options={{
-                title: "Acceuil",
+                title: "Accueil",
                 tabBarIcon: () => <House />
             }}
         />
@@ -29,6 +29,14 @@ export default function _layout() {
             options={{
                 title: "Historique",
                 tabBarIcon: () => <History />
+            }}
+        />
+
+        <Tabs.Screen 
+            name='compte'
+            options={{
+                title: "Mon compte",
+                tabBarIcon: () => <CircleUserRound />
             }}
         />
 

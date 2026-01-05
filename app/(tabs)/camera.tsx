@@ -19,8 +19,6 @@ import { useResizePlugin } from 'vision-camera-resize-plugin';
 export default function CameraScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
   const [cameraPosition, setCameraPosition] = useState<CameraPosition>('back');
-  
-  // État du Flash (ON/OFF)
   const [flash, setFlash] = useState<'off' | 'on'>('off');
 
   const device = useCameraDevice(cameraPosition);
@@ -37,6 +35,15 @@ export default function CameraScreen() {
   const { resize } = useResizePlugin();
 
   const isBusy = useSharedValue(false);
+
+  useEffect(() => {
+  if (model) {
+    console.log("Détails du modèle :", {
+      inputs: model.inputs,
+      outputs: model.outputs
+    });
+  }
+}, [model]);
   
   const labels = useMemo(() => [
       'Ours', 'Guépard', "Crocodile", 'Éléphant', 'Renard', 
@@ -58,57 +65,124 @@ export default function CameraScreen() {
     setDetectionScore(score);
   });
 
-  const processOutput = (data: any) => {
-     const numAnchors = 8400;
-     const numClass = 15;
-     let bestScore = 0.55; 
-     let bestClassIdx = -1;
+ const processOutput = (data: any) => {
+  // data est un Float32Array de 159 600 éléments (19 * 8400)
+  const numAnchors = 8400;
+  const numClasses = 15;
+  
+  let bestScore = 0.50; // Seuil de confiance
+  let bestClassIdx = -1;
 
-     for (let c = 0; c < numClass; c++) {
-       const rowOffset = (4 + c) * numAnchors;
-       for (let i = 0; i < numAnchors; i++) {
-         const score = data[rowOffset + i];
-         if (score > bestScore) {
-           bestScore = score;
-           bestClassIdx = c;
-         }
-       }
-     }
-     return bestClassIdx !== -1 
-        ? { label: labels[bestClassIdx], score: `${Math.round(bestScore * 100)}%` }
-        : { label: "Inconnu", score: "" };
-  };
+  // On ne boucle QUE sur les lignes des classes (de la ligne 4 à 18)
+  for (let c = 0; c < numClasses; c++) {
+    const rowOffset = (4 + c) * numAnchors; // On saute les 4 lignes de coordonnées
+    
+    for (let i = 0; i < numAnchors; i++) {
+      const score = data[rowOffset + i];
+      if (score > bestScore) {
+        bestScore = score;
+        bestClassIdx = c;
+      }
+    }
+  }
+
+  if (bestClassIdx !== -1) {
+    return {
+      label: labels[bestClassIdx],
+      score: `${Math.round(bestScore * 100)}%`
+    };
+  }
+  
+  return { label: "Inconnu", score: "" };
+};
 
   const toggleCamera = () => setCameraPosition((cur) => (cur === 'back' ? 'front' : 'back'));
   const toggleFlash = () => setFlash((cur) => (cur === 'off' ? 'on' : 'off'));
 
-  const processImageFromGallery = async (imageUri: string) => {
-    if (!model) return;
-    setLoading(true);
-    try {
-      const manipResult = await ImageManipulator.manipulateAsync(
-        imageUri,
-        [{ resize: { width: 640, height: 640 } }],
-        { format: ImageManipulator.SaveFormat.JPEG, base64: true } 
-      );
-      const imgBuffer = Buffer.from(manipResult.base64!, 'base64');
-      const rawData = jpeg.decode(imgBuffer, { useTArray: true });
-      const float32Data = new Float32Array(640 * 640 * 3);
-      let p = 0;
-      for (let i = 0; i < rawData.data.length; i += 4) {
-         float32Data[p++] = rawData.data[i] / 255.0;     
-         float32Data[p++] = rawData.data[i + 1] / 255.0; 
-         float32Data[p++] = rawData.data[i + 2] / 255.0; 
-      }
-      const outputs = model.runSync([float32Data]);
-      setCapturedResult(processOutput(outputs[0]));
-      setUri(imageUri); 
-    } catch (error) {
-      Alert.alert("Erreur", "Impossible d'analyser cette image.");
-    } finally {
-      setLoading(false);
+  // ✅ Worklet permanent pour l'inférence sur images de galerie
+  const runGalleryInference = Worklets.createRunOnJS((pixelData: number[]) => {
+    'worklet';
+    if (!model) {
+      console.log("Model not loaded");
+      return null;
     }
-  };
+    
+    try {
+      console.log("Dans worklet, création Float32Array...");
+      // Créer le Float32Array dans le worklet
+      const float32 = new Float32Array(pixelData.length);
+      for (let i = 0; i < pixelData.length; i++) {
+        float32[i] = pixelData[i];
+      }
+      
+      console.log("Float32 créé, premiers:", float32[0], float32[1], float32[2]);
+      console.log("Appel model.runSync...");
+      
+      // Tenter l'inférence
+      const result = model.runSync([float32]);
+      console.log("✅ runSync réussi! Sorties:", result.length);
+      return result;
+    } catch (error) {
+      console.error("Gallery inference error:", error);
+      if (error instanceof Error) {
+        console.error("Error message:", error.message);
+      } 
+      return null;
+    }
+  });
+
+  const processImageFromGallery = async (imageUri: string) => {
+  if (!model) return;
+  setLoading(true);
+
+  try {
+    // 1. Préparation Image
+    const manipResult = await ImageManipulator.manipulateAsync(
+      imageUri, [{ resize: { width: 640, height: 640 } }],
+      { format: ImageManipulator.SaveFormat.JPEG, base64: true }
+    );
+
+    const imgBuffer = Buffer.from(manipResult.base64!, 'base64');
+    const rawData = jpeg.decode(imgBuffer, { useTArray: true });
+    
+    // 2. Création d'un buffer "frais"
+    const float32Data = new Float32Array(1228800);
+    for (let i = 0; i < 409600; i++) {
+      float32Data[i * 3]     = rawData.data[i * 4] / 255.0;
+      float32Data[i * 3 + 1] = rawData.data[i * 4 + 1] / 255.0;
+      float32Data[i * 3 + 2] = rawData.data[i * 4 + 2] / 255.0;
+    }
+
+    // --- LE FIX POUR ANDROID ---
+    // On libère manuellement les grosses variables avant l'appel CPU intensif
+    // @ts-ignore
+    manipResult.base64 = null;
+    
+    console.log("Exécution Inférence...");
+
+    // On utilise run() au lieu de runSync() pour laisser le thread UI respirer
+    // et éviter le "Watchdog" Android qui tue l'app si runSync prend 200ms
+    const outputs = await model.run([float32Data]);
+
+    if (outputs && outputs.length > 0) {
+      console.log("Inférence terminée. Taille sortie:", outputs[0].length);
+      
+      // Sécurité : on vérifie que la sortie fait bien 19 * 8400 = 159600
+      if (outputs[0].length === 159600) {
+        const result = processOutput(outputs[0]);
+        setCapturedResult(result);
+        setUri(imageUri);
+      } else {
+        console.error("Taille de sortie inattendue:", outputs[0].length);
+      }
+    }
+  } catch (error) {
+    console.error("Crash intercepté par Catch:", error);
+    Alert.alert("Désolé", "L'analyse a échoué. Ton téléphone bloque peut-être l'usage du processeur pour ce modèle.");
+  } finally {
+    setLoading(false);
+  }
+};
 
   const pickImage = async () => {
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -116,35 +190,40 @@ export default function CameraScreen() {
       Alert.alert("Permission requise", "Tu dois autoriser l'accès à la galerie !");
       return;
     }
+    
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       allowsEditing: true, 
       aspect: [1, 1],      
-      quality: 1,
+      quality: 0.7,
     });
-    if (!result.canceled) {
+    
+    if (!result.canceled && result.assets && result.assets.length > 0) {
       await processImageFromGallery(result.assets[0].uri);
     }
   };
 
   const takePicture = async () => {
     try {
-      // On sauvegarde le résultat actuel de l'IA (avant le flash)
       setCapturedResult({ label: detectionLabel, score: detectionScore });
       
       if (cameraRef.current) {
-        // MODIFICATION ICI : On remet le flash 'physique'
         const photo = await cameraRef.current.takePhoto({
-          flash: flash, // 'on' ou 'off' selon l'état du bouton
+          flash: flash,
           enableShutterSound: true
         });
         
         if (photo?.path) setUri(`file://${photo.path}`);
       }
-    } catch (error) { console.error(error); }
+    } catch (error) { 
+      console.error("Erreur prise de photo:", error); 
+    }
   };
 
-  const closePhoto = () => { setUri(null); setCapturedResult(null); };
+  const closePhoto = () => { 
+    setUri(null); 
+    setCapturedResult(null); 
+  };
 
   const frameProcessor = useFrameProcessor((frame) => {
     'worklet';
@@ -170,15 +249,24 @@ export default function CameraScreen() {
             const rowOffset = (4 + c) * numAnchors;
             for (let i = 0; i < numAnchors; i++) {
               const score = (data as any)[rowOffset + i];
-              if (score > bestScore) { bestScore = score; bestClassIdx = c; }
+              if (score > bestScore) { 
+                bestScore = score; 
+                bestClassIdx = c; 
+              }
             }
           }
           if (bestClassIdx !== -1) { 
             const labelStr = labels[bestClassIdx] ?? "Animal";
             updateResultOnJS(labelStr, `${Math.round(bestScore * 100)}%`);
-          } else { updateResultOnJS("", ""); }
+          } else { 
+            updateResultOnJS("", ""); 
+          }
         }
-      } catch (e) { console.log(e); } finally { isBusy.value = false; }
+      } catch (e) { 
+        console.log(e); 
+      } finally { 
+        isBusy.value = false; 
+      }
     });
   }, [model, labels]);
 
@@ -221,10 +309,8 @@ export default function CameraScreen() {
         pixelFormat="yuv"
         videoStabilizationMode="off" 
         photo={true}
-        // J'ai retiré la prop "torch" ici pour revenir au flash normal
       />
       
-      {/* Bouton Flash classique */}
       {device?.hasFlash && (
         <TouchableOpacity style={styles.flashButton} onPress={toggleFlash}>
              <Text style={styles.iconText}>{flash === 'on' ? '⚡️' : '🚫'}</Text>

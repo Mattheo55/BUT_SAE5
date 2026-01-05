@@ -47,7 +47,8 @@
         }
       ],
       "react-native-vision-camera",
-      "react-native-fast-tflite"
+      "react-native-fast-tflite",
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,

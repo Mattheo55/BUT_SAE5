@@ -1,8 +1,10 @@
+import ThemedText from '@/Components/ThemedText';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import React, { useMemo } from 'react';
-import { Dimensions, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo } from 'react';
+import { ActivityIndicator, Alert, Dimensions, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAuth } from './compte';
 
 type Vignette = {
   id: string;
@@ -12,13 +14,27 @@ type Vignette = {
 type HistoriqueItem = {
   id: string;
   animal: string;
-  date: string;     // format d’affichage, ex : "12/01/2025 • 14:32"
+  date: string;     
   uri: string;
 };
 
 export default function Historique() {
   const router = useRouter();
   const largeurEcran = Dimensions.get('window').width;
+
+  const { user, isLoading } = useAuth();
+  console.log("État actuel de l'utilisateur dans Historique:", user);
+
+  useEffect(() => {
+    if(!user) {
+      Alert.alert("Connexion requise", "Pour accéder à l'historique, vous devez vous connecter.", [
+        {
+          text: "Connexion",
+          onPress: () => router.replace('/(tabs)/compte')
+        }
+      ])
+    }
+  }, [user]);
 
   // --- Données fictives : à remplacer plus tard par les vraies valeurs ---
   const vignettes: Vignette[] = useMemo(
@@ -40,7 +56,6 @@ export default function Historique() {
     []
   );
 
-  // --- Configuration de la grille des vignettes (5 colonnes, 2 lignes = 10 images) ---
   const NB_VIGNETTES_PAR_LIGNE = 5;
   const espacement = 8;
   const margeHorizontale = 16;
@@ -48,12 +63,9 @@ export default function Historique() {
     (largeurEcran - margeHorizontale * 2 - espacement * (NB_VIGNETTES_PAR_LIGNE - 1)) /
     NB_VIGNETTES_PAR_LIGNE;
 
-  // --- Affichage d’une vignette ---
   const renderVignette = ({ item }: { item: Vignette }) => (
     <Pressable
       onPress={() => {
-        // Navigation vers la page du résultat (à activer plus tard)
-        // router.push({ pathname: '/result', params: { id: item.id } });
       }}
       style={[
         styles.vignetteBox,
@@ -66,7 +78,6 @@ export default function Historique() {
     </Pressable>
   );
 
-  // --- Affichage d’une carte d’historique ---
   const renderCarte = ({ item }: { item: HistoriqueItem }) => (
     <Pressable
       style={styles.carte}
@@ -83,45 +94,54 @@ export default function Historique() {
       </View>
     </Pressable>
   );
-
-  return (
-    <SafeAreaView style={styles.zoneSecurisee} edges={['top', 'left', 'right']}>
-      <ScrollView contentContainerStyle={styles.contenuScroll}>
-        {/* --- En-tête de la page --- */}
-        <View style={styles.entete}>
-          <Text style={styles.titre}>Historique</Text>
-          <Text style={styles.sousTitre}>Liste des 10 dernières photos</Text>
-        </View>
-
-        {/* --- Grille des vignettes --- */}
-        <View style={styles.section}>
-          <FlatList
-            data={vignettes}
-            renderItem={renderVignette}
-            keyExtractor={(t) => t.id}
-            numColumns={NB_VIGNETTES_PAR_LIGNE}
-            scrollEnabled={false}
-            contentContainerStyle={{ paddingHorizontal: margeHorizontale }}
-          />
-        </View>
-
-        {/* --- Liste des cartes avec nom + date --- */}
-        <View style={styles.section}>
-          <Text style={styles.titreBloc}>Nom de l’animal et date de reconnaissance</Text>
-          <FlatList
-            data={elements}
-            keyExtractor={(i) => i.id}
-            renderItem={renderCarte}
-            scrollEnabled={false}
-            contentContainerStyle={styles.cartesWrap}
-            ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
-          />
-        </View>
-
-        {/* --- Marge inférieure pour le confort visuel --- */}
-        <View style={{ height: 24 }} />
-      </ScrollView>
+  
+  if (isLoading) {
+    return <ActivityIndicator style={{ flex: 1 }} />;
+  }
+  if(!user) {
+    return <SafeAreaView style={{ justifyContent: "center", alignItems: "center", flex: 1 }}>
+      <ThemedText type='title'>Connectez-vous</ThemedText>
+      <ThemedText>Connectez-vous pour accéder a l'historique</ThemedText>
     </SafeAreaView>
+  } // si user pas connecte
+  return (
+      <SafeAreaView style={styles.zoneSecurisee} edges={['top', 'left', 'right']}>
+        <ScrollView contentContainerStyle={styles.contenuScroll}>
+          {/* --- En-tête de la page --- */}
+          <View style={styles.entete}>
+            <Text style={styles.titre}>Historique</Text>
+            <Text style={styles.sousTitre}>Liste des 10 dernières photos</Text>
+          </View>
+
+          {/* --- Grille des vignettes --- */}
+          <View style={styles.section}>
+            <FlatList
+              data={vignettes}
+              renderItem={renderVignette}
+              keyExtractor={(t) => t.id}
+              numColumns={NB_VIGNETTES_PAR_LIGNE}
+              scrollEnabled={false}
+              contentContainerStyle={{ paddingHorizontal: margeHorizontale }}
+            />
+          </View>
+
+          {/* --- Liste des cartes avec nom + date --- */}
+          <View style={styles.section}>
+            <Text style={styles.titreBloc}>Nom de l’animal et date de reconnaissance</Text>
+            <FlatList
+              data={elements}
+              keyExtractor={(i) => i.id}
+              renderItem={renderCarte}
+              scrollEnabled={false}
+              contentContainerStyle={styles.cartesWrap}
+              ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+            />
+          </View>
+
+          {/* --- Marge inférieure pour le confort visuel --- */}
+          <View style={{ height: 24 }} />
+        </ScrollView>
+      </SafeAreaView>
   );
 }
 
@@ -173,7 +193,6 @@ const styles = StyleSheet.create({
   vignetteImg: {
     width: '100%',
     height: '100%',
-    contentFit: 'cover',
   },
 
   // Cartes d’historique
@@ -194,7 +213,6 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 140,
     backgroundColor: '#E4E6ED',
-    contentFit: 'cover',
   },
   carteCorps: {
     paddingHorizontal: 12,

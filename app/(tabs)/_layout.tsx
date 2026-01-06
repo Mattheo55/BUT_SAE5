@@ -39,7 +39,6 @@ function TabsLayout() {
                 options={{
                     title: "Historique",
                     tabBarIcon: () => <History />,
-                    href: user ? undefined : null,
                 }}
             />
 

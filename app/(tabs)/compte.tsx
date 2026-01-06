@@ -208,9 +208,7 @@ const AccountScreenContent = () => {
 
 export default function AccountScreen() {
   return (
-    <AuthProvider>
       <AccountScreenContent />
-    </AuthProvider>
   );
 }
 

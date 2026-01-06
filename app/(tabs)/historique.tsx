@@ -2,7 +2,7 @@ import ThemedText from '@/Components/ThemedText';
 import { API_URL } from '@/helper/constant';
 import axios from 'axios';
 import { Image } from 'expo-image';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo } from 'react';
 import { ActivityIndicator, Alert, Dimensions, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -106,7 +106,10 @@ export default function Historique() {
     >
       <Image source={{ uri: item.uri }} style={styles.carteImage} />
       <View style={styles.carteCorps}>
-        <Text style={styles.carteTitre}>{item.animale_name}</Text>
+        <View style={{ justifyContent: "space-between", flexDirection: "row" }}>
+          <Text style={styles.carteTitre}>{item.animale_name}</Text>
+          <Text>{item.animale_rate_reconize} %</Text>
+        </View>
         <Text style={styles.carteMeta}>{item.date}</Text>
       </View>
     </Pressable>

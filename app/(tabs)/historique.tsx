@@ -130,20 +130,8 @@ export default function Historique() {
           {/* --- En-tête de la page --- */}
           <View style={styles.entete}>
             <Text style={styles.titre}>Historique</Text>
-            <Text style={styles.sousTitre}>Liste des 10 dernières photos</Text>
           </View>
 
-          {/* --- Grille des vignettes --- */}
-          <View style={styles.section}>
-            <FlatList
-              data={vignettes}
-              renderItem={renderVignette}
-              keyExtractor={(t) => t.id}
-              numColumns={NB_VIGNETTES_PAR_LIGNE}
-              scrollEnabled={false}
-              contentContainerStyle={{ paddingHorizontal: margeHorizontale }}
-            />
-          </View>
 
           {/* --- Liste des cartes avec nom + date --- */}
           <View style={styles.section}>
@@ -231,7 +219,7 @@ const styles = StyleSheet.create({
   },
   carteImage: {
     width: '100%',
-    height: 140,
+    height: 200,
     backgroundColor: '#E4E6ED',
   },
   carteCorps: {

@@ -219,8 +219,9 @@ export default function CameraScreen() {
         });
         
         if (photo?.path) {
-          setUri(`file://${photo.path}`);
-          putInHistory(result.label, result.score);
+          const fullUri = `file://${photo.path}`;
+          setUri(fullUri);
+          putInHistory(result.label, result.score, fullUri);
         } 
           
       }
@@ -280,13 +281,28 @@ export default function CameraScreen() {
   }, [model, labels]);
 
 
-  async function putInHistory(label: string, scoreStr: string) {
+  async function putInHistory(label: string, scoreStr: string, imageUri: string) {
     if (!user || !label || label === "Inconnu") return;
     const numericScore = parseInt(scoreStr.replace("%", ""), 10);
 
       try {
-        await axios.post(`${API_URL}/add_history`, {user_id: user.id, animale_name: label, animale_rate_reconize: numericScore})
+        const formData = new FormData();
+        formData.append('file',{
+          uri: imageUri,
+          type: 'image/jpeg',
+          name: "upload.jpg"
+        } as any)
+
+        formData.append('upload_preset', 'animal_sae'); 
+        const cloudName = 'dpwbxqmvt';
+
+        const cloudRes = await axios.post(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+
+        const imageUrlOnWeb = cloudRes.data.secure_url;
+
+        await axios.post(`${API_URL}/add_history`, {user_id: user.id, animale_name: label, animale_rate_reconize: numericScore, uri: imageUrlOnWeb})
       } catch (error: any) {
+        console.error("Erreur historique:", error.response?.data || error.message);
         Alert.alert("Erreur", error.response?.data?.detail || "Erreur de connexion, impossible d'enregistrer dans l'historique");
       }
   

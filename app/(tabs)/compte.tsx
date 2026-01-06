@@ -1,3 +1,4 @@
+import { API_URL } from '@/helper/constant';
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import React, { createContext, ReactNode, useContext, useEffect, useState } from 'react';
@@ -14,8 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 // --- 1. CONFIGURATION & TYPES ---
 
-// ATTENTION : Remplace par TON IP LOCALE (ex: 192.168.1.15)
-const API_URL = 'http://10.223.141.182:8000';
+
 
 interface User {
   id: string | number;

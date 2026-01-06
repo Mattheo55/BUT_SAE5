@@ -1,4 +1,6 @@
 import ThemedText from '@/Components/ThemedText';
+import { API_URL } from '@/helper/constant';
+import axios from 'axios';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useMemo } from 'react';
@@ -13,7 +15,9 @@ type Vignette = {
 
 type HistoriqueItem = {
   id: string;
-  animal: string;
+  user_id: string,
+  animale_name: string; 
+  animale_rate_reconize: number;
   date: string;     
   uri: string;
 };
@@ -22,8 +26,10 @@ export default function Historique() {
   const router = useRouter();
   const largeurEcran = Dimensions.get('window').width;
 
+  const [historyData, setHistoryData] = React.useState<HistoriqueItem[]>([]);
+  const [isFetching, setIsFetching] = React.useState(false);
+
   const { user, isLoading } = useAuth();
-  console.log("État actuel de l'utilisateur dans Historique:", user);
 
   useEffect(() => {
     if(!user) {
@@ -33,27 +39,31 @@ export default function Historique() {
           onPress: () => router.replace('/(tabs)/compte')
         }
       ])
+    } else {
+      fetchData();
     }
-  }, [user]);
+  }, [user, isLoading]);
 
-  // --- Données fictives : à remplacer plus tard par les vraies valeurs ---
+  async function fetchData() {
+    if(!user?.id) return;
+    setIsFetching(true);
+    try {
+      const response = await axios.get(`${API_URL}/get_history`, {params: {user_id: user.id}});
+      setHistoryData(response.data);
+    } catch (error: any) {
+        Alert.alert("Erreur", error.response?.data?.detail || "Erreur de connexion");
+    } finally {
+      setIsFetching(false)
+    }
+  }
+
   const vignettes: Vignette[] = useMemo(
     () =>
       Array.from({ length: 10 }).map((_, i) => ({
         id: `vignette-${i + 1}`,
         uri: 'https://via.placeholder.com/160x160.png?text=%20',
       })),
-    []
-  );
-
-  const elements: HistoriqueItem[] = useMemo(
-    () => [
-      { id: 'h1', animal: 'Chien', date: '12/01/2025 • 14:32', uri: 'https://via.placeholder.com/640x420.png' },
-      { id: 'h2', animal: 'Cheval',    date: '11/01/2025 • 19:05', uri: 'https://via.placeholder.com/640x420.png' },
-      { id: 'h3', animal: 'Сhat',    date: '10/01/2025 • 08:47', uri: 'https://via.placeholder.com/640x420.png' },
-      { id: 'h4', animal: 'Pigeon',   date: '09/01/2025 • 21:13', uri: 'https://via.placeholder.com/640x420.png' },
-    ],
-    []
+    [historyData]
   );
 
   const NB_VIGNETTES_PAR_LIGNE = 5;
@@ -85,11 +95,11 @@ export default function Historique() {
         // router.push({ pathname: '/result', params: { id: item.id } });
       }}
       accessibilityRole="button"
-      accessibilityLabel={`Ouvrir ${item.animal} reconnu le ${item.date}`}
+      accessibilityLabel={`Ouvrir ${item.animale_name} reconnu le ${item.date}`}
     >
       <Image source={{ uri: item.uri }} style={styles.carteImage} />
       <View style={styles.carteCorps}>
-        <Text style={styles.carteTitre}>{item.animal}</Text>
+        <Text style={styles.carteTitre}>{item.animale_name}</Text>
         <Text style={styles.carteMeta}>{item.date}</Text>
       </View>
     </Pressable>
@@ -129,7 +139,7 @@ export default function Historique() {
           <View style={styles.section}>
             <Text style={styles.titreBloc}>Nom de l’animal et date de reconnaissance</Text>
             <FlatList
-              data={elements}
+              data={historyData}
               keyExtractor={(i) => i.id}
               renderItem={renderCarte}
               scrollEnabled={false}

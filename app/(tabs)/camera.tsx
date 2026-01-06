@@ -1,3 +1,5 @@
+import { API_URL } from '@/helper/constant';
+import axios from 'axios';
 import { Buffer } from 'buffer';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
@@ -15,8 +17,10 @@ import {
 } from 'react-native-vision-camera';
 import { Worklets, useSharedValue } from 'react-native-worklets-core';
 import { useResizePlugin } from 'vision-camera-resize-plugin';
+import { useAuth } from './compte';
 
 export default function CameraScreen() {
+  const {user} = useAuth();
   const { hasPermission, requestPermission } = useCameraPermission();
   const [cameraPosition, setCameraPosition] = useState<CameraPosition>('back');
   const [flash, setFlash] = useState<'off' | 'on'>('off');
@@ -205,7 +209,8 @@ export default function CameraScreen() {
 
   const takePicture = async () => {
     try {
-      setCapturedResult({ label: detectionLabel, score: detectionScore });
+      const result = { label: detectionLabel, score: detectionScore }
+      setCapturedResult(result);
       
       if (cameraRef.current) {
         const photo = await cameraRef.current.takePhoto({
@@ -213,7 +218,11 @@ export default function CameraScreen() {
           enableShutterSound: true
         });
         
-        if (photo?.path) setUri(`file://${photo.path}`);
+        if (photo?.path) {
+          setUri(`file://${photo.path}`);
+          putInHistory(result.label, result.score);
+        } 
+          
       }
     } catch (error) { 
       console.error("Erreur prise de photo:", error); 
@@ -269,6 +278,19 @@ export default function CameraScreen() {
       }
     });
   }, [model, labels]);
+
+
+  async function putInHistory(label: string, scoreStr: string) {
+    if (!user || !label || label === "Inconnu") return;
+    const numericScore = parseInt(scoreStr.replace("%", ""), 10);
+
+      try {
+        await axios.post(`${API_URL}/add_history`, {user_id: user.id, animale_name: label, animale_rate_reconize: numericScore})
+      } catch (error: any) {
+        Alert.alert("Erreur", error.response?.data?.detail || "Erreur de connexion, impossible d'enregistrer dans l'historique");
+      }
+  
+  }
 
   if (uri) {
     return (

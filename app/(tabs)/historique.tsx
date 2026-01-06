@@ -2,11 +2,12 @@ import ThemedText from '@/Components/ThemedText';
 import { API_URL } from '@/helper/constant';
 import axios from 'axios';
 import { Image } from 'expo-image';
-import { useRouter } from 'expo-router';
-import React, { useEffect, useMemo } from 'react';
+import { useRouter, useFocusEffect } from 'expo-router';
+import React, { useCallback, useEffect, useMemo } from 'react';
 import { ActivityIndicator, Alert, Dimensions, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from './compte';
+
 
 type Vignette = {
   id: string;
@@ -39,10 +40,16 @@ export default function Historique() {
           onPress: () => router.replace('/(tabs)/compte')
         }
       ])
-    } else {
-      fetchData();
     }
   }, [user, isLoading]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if(user) {
+        fetchData();
+      }
+    } , [user])
+  );
 
   async function fetchData() {
     if(!user?.id) return;

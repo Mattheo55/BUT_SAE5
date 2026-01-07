@@ -175,7 +175,7 @@ export default function CameraScreen() {
              const numClass = 15;
              
              // On monte un peu le seuil pour éviter les "faux positifs" qui clignotent
-             let bestScore = 0.30; 
+             let bestScore = 0.70; 
              let bestClassIdx = -1;
              let bestAnchorIdx = -1;
 

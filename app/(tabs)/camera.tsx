@@ -54,7 +54,7 @@ export default function CameraScreen() {
 
   useEffect(() => { requestPermission(); }, [requestPermission]);
 
-  // --- FONCTION GALERIE (VIA API) ---
+  // --- FONCTION GALERIE (VIA API) : MIGRATION ---
   const processImageFromGallery = async (imageUri: string) => {
     setLoading(true);
     console.log("--- Début traitement via API ---");
@@ -78,7 +78,7 @@ export default function CameraScreen() {
       const imageUrl = uploadRes.data.secure_url;
       console.log('✅ Image Uploadée :', imageUrl);
 
-      // 2. Envoi à ton API Python locale
+      // 2. Envoi dans API Python locale
       const apiRes = await axios.post(`${API_URL}/analyze_animal`, { image_url: imageUrl });
 
       const { label, score } = apiRes.data;
@@ -181,7 +181,6 @@ export default function CameraScreen() {
     try {
       // Note: Si on vient de la galerie, l'image est déjà sur Cloudinary.
       // Si on vient de la caméra, c'est une URI locale.
-      // Ton code actuel re-uploade systématiquement, ce qui est acceptable pour simplifier.
       let finalUri = imageUri;
       
       if (!imageUri.startsWith('http')) {

@@ -1,1 +1,2 @@
 export const API_URL = 'http://10.223.141.182:8000';
+export const cloudName = 'dpwbxqmvt';

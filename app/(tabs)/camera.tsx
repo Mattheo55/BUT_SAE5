@@ -78,13 +78,13 @@ export default function CameraScreen() {
       );
 
       const imageUrl = uploadRes.data.secure_url;
-      console.log('✅ Image Uploadée :', imageUrl);
+      console.log('Image Uploadée :', imageUrl);
 
       // 2. Envoi dans API Python locale
       const apiRes = await axios.post(`${API_URL}/analyze_animal`, { image_url: imageUrl });
 
       const { label, score, annoted_image } = apiRes.data;
-      console.log('✅ Résultat API :', label, score);
+      console.log('Résultat API :', label, score);
 
       setCapturedResult({ label, score: score });
       
@@ -99,7 +99,7 @@ export default function CameraScreen() {
       await putInHistory(label, score, imageUrl);
 
     } catch (error) {
-      console.error("❌ Erreur API:", error);
+      console.error("Erreur API:", error);
       Alert.alert("Oups", "Impossible d'analyser l'image via le serveur. Vérifie que ton PC est allumé et l'API lancée.");
     } finally {
       setLoading(false);
@@ -202,7 +202,7 @@ export default function CameraScreen() {
                     x = x * 640; y = y * 640; w = w * 640; h = h * 640;
                 }
 
-                // ⛔️ PAS DE CONSOLE.LOG ICI ! C'est ça qui fait laguer.
+                // PAS DE CONSOLE.LOG ICI ! C'est ça qui fait laguer.
                 
                 const boundingBox = { x, y, w, h };
                 updateResultOnJS(labels[bestClassIdx], `${Math.round(bestScore * 100)}%`, boundingBox);
@@ -310,7 +310,11 @@ export default function CameraScreen() {
       )}
        {device?.hasFlash && (
         <TouchableOpacity style={styles.flashButton} onPress={toggleFlash}>
-          <Text style={styles.iconText}>{flash === 'on' ? '⚡️' : '🚫'}</Text>
+          if (flash === 'on') {
+            <Image source={require('../../assets/images/ActiverFlash.png') } style={{width: 100, height: 100}} ></Image>
+          }else{
+            <Image source={require('../../assets/images/DesactiverFlash.png') } style={{width: 100, height: 100}} ></Image>
+          }
         </TouchableOpacity>
       )}
       <View style={styles.overlay}>
@@ -325,13 +329,13 @@ export default function CameraScreen() {
       </View>
       <View style={styles.controls}>
         <TouchableOpacity style={styles.galleryButton} onPress={pickImage}>
-          <Text style={styles.iconText}>🖼️</Text>
+          <Image source={require('../../assets/images/Galerie.png') } style={{width: 100, height: 100}} ></Image>
         </TouchableOpacity>
         <Pressable onPress={takePicture}>
           <View style={styles.shutterOuter}><View style={styles.shutterInner} /></View>
         </Pressable>
         <TouchableOpacity style={styles.flipButton} onPress={toggleCamera}>
-          <Text style={styles.iconText}>🔄</Text>
+          <Image source={require('../../assets/images/RetournerAppareilPhoto.png') } style={{width: 100, height: 100}} ></Image>
         </TouchableOpacity>
       </View>
     </View>

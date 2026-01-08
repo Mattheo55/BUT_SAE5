@@ -1,5 +1,7 @@
+import { formaterDate } from '@/helper/formateDate';
 import { HistoriqueItem } from '@/Type/Item';
 import { Image } from 'expo-image';
+import { useRouter } from 'expo-router';
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -8,11 +10,24 @@ type RenderCarteProps = {
 }
 
 export default function RenderCarte({item}: RenderCarteProps) {
+  const router = useRouter()
+
+
+
   return (
         <Pressable
           style={styles.carte}
           onPress={() => {
-            // router.push({ pathname: '/result', params: { id: item.id } });
+            router.push({ 
+            pathname: "/result", 
+            params: { 
+                id: item.id,
+                animale_name: item.animale_name,
+                animale_rate_reconize: item.animale_rate_reconize,
+                date: formaterDate(item.date),
+                uri: item.uri 
+            } 
+        });
           }}
           accessibilityRole="button"
           accessibilityLabel={`Ouvrir ${item.animale_name} reconnu le ${item.date}`}
@@ -23,7 +38,7 @@ export default function RenderCarte({item}: RenderCarteProps) {
               <Text style={styles.carteTitre}>{item.animale_name}</Text>
               <Text>{item.animale_rate_reconize} %</Text>
             </View>
-            <Text style={styles.carteMeta}>{item.date}</Text>
+            <Text style={styles.carteMeta}>{formaterDate(item.date)}</Text>
           </View>
         </Pressable>
   

@@ -8,7 +8,7 @@ import axios from 'axios';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { MoveRight } from 'lucide-react-native';
 import React, { useCallback, useState } from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native'; // 👈 N'oublie pas d'importer ActivityIndicator
+import { ActivityIndicator, Button, Pressable, View } from 'react-native'; // 👈 N'oublie pas d'importer ActivityIndicator
 import { useAuth } from './compte';
 
 export default function Index() {
@@ -17,6 +17,7 @@ export default function Index() {
 
   const [isFetching, setIsFetching] = useState<boolean>(false);
   const [lastHistoryItem, setLastHistoryItem] = useState<HistoriqueItem | null>(null);
+
 
   const router = useRouter();
 
@@ -73,10 +74,17 @@ export default function Index() {
                 <ThemedText style={{opacity: 0.6, fontStyle: 'italic', marginTop: 10}}>Aucune analyse récente</ThemedText>
             )
         ) : (
-            // Cas 4 : Pas connecté
             <ThemedText style={{marginTop: 10}}>Connectez-vous pour enregistrer tous vos scans</ThemedText> 
         )}
         
+      </View>
+
+      <View style={{marginTop: 20}}>
+        <ThemedText bold>Aider l'IA à apprendre</ThemedText>
+        <Button
+          title='Contribuer'
+          onPress={() => router.push('/(tabs)/contribute')}
+        />
       </View>
     </ThemedView>
   );

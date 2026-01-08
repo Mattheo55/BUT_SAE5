@@ -197,23 +197,18 @@ export default function CameraScreen() {
                 let w = (data as any)[2 * numAnchors + bestAnchorIdx];
                 let h = (data as any)[3 * numAnchors + bestAnchorIdx];
 
-                // Correction coord normalized (0-1) -> pixels (0-640)
                 if (x < 2 && w < 2) { 
                     x = x * 640; y = y * 640; w = w * 640; h = h * 640;
                 }
 
-                // PAS DE CONSOLE.LOG ICI ! C'est ça qui fait laguer.
                 
                 const boundingBox = { x, y, w, h };
                 updateResultOnJS(labels[bestClassIdx], `${Math.round(bestScore * 100)}%`, boundingBox);
              } else {
-                // Astuce : On envoie null pour effacer le carré seulement si nécessaire
-                // (Optionnel : on pourrait vérifier si on avait déjà affiché quelque chose avant pour optimiser encore plus)
                 updateResultOnJS("", "", null);
              }
         }
       } catch (e) { 
-        // Pas de log d'erreur en boucle non plus
       } finally { 
         isBusy.value = false; 
       }
@@ -224,8 +219,6 @@ export default function CameraScreen() {
      if (!user || !label || label === "Inconnu") return;
     const numericScore = parseInt(scoreStr.replace("%", ""), 10);
     try {
-      // Note: Si on vient de la galerie, l'image est déjà sur Cloudinary.
-      // Si on vient de la caméra, c'est une URI locale.
       let finalUri = imageUri;
       
       if (!imageUri.startsWith('http')) {

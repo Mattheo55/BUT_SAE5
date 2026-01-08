@@ -50,6 +50,13 @@ function TabsLayout() {
                 }}
             />
 
+            <Tabs.Screen
+                name='contribute'
+                options={{
+                    href: null
+                }}
+            />
+
         </Tabs>
     )
 }

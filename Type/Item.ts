@@ -1,6 +1,8 @@
 export type HistoriqueItem = {
   id: string;
-  animal: string;
-  date: string;     // format d’affichage, ex : "12/01/2025 • 14:32"
+  user_id: string,
+  animale_name: string; 
+  animale_rate_reconize: number;
+  date: string;     
   uri: string;
 };

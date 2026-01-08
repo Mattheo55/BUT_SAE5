@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useMemo } from 'react';
 import { ActivityIndicator, Alert, Dimensions, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from './compte';
+import { HistoriqueItem } from '@/Type/Item';
 
 
 type Vignette = {
@@ -14,14 +15,7 @@ type Vignette = {
   uri: string;
 };
 
-type HistoriqueItem = {
-  id: string;
-  user_id: string,
-  animale_name: string; 
-  animale_rate_reconize: number;
-  date: string;     
-  uri: string;
-};
+
 
 export default function Historique() {
   const router = useRouter();
@@ -64,14 +58,6 @@ export default function Historique() {
     }
   }
 
-  const vignettes: Vignette[] = useMemo(
-    () =>
-      Array.from({ length: 10 }).map((_, i) => ({
-        id: `vignette-${i + 1}`,
-        uri: 'https://via.placeholder.com/160x160.png?text=%20',
-      })),
-    [historyData]
-  );
 
   const NB_VIGNETTES_PAR_LIGNE = 5;
   const espacement = 8;
@@ -80,20 +66,6 @@ export default function Historique() {
     (largeurEcran - margeHorizontale * 2 - espacement * (NB_VIGNETTES_PAR_LIGNE - 1)) /
     NB_VIGNETTES_PAR_LIGNE;
 
-  const renderVignette = ({ item }: { item: Vignette }) => (
-    <Pressable
-      onPress={() => {
-      }}
-      style={[
-        styles.vignetteBox,
-        { width: tailleVignette, height: tailleVignette, marginRight: espacement, marginBottom: espacement },
-      ]}
-      accessibilityRole="imagebutton"
-      accessibilityLabel="Ouvrir la reconnaissance"
-    >
-      <Image source={{ uri: item.uri }} style={styles.vignetteImg} />
-    </Pressable>
-  );
 
   const renderCarte = ({ item }: { item: HistoriqueItem }) => (
     <Pressable

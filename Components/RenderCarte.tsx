@@ -9,20 +9,24 @@ type RenderCarteProps = {
 
 export default function RenderCarte({item}: RenderCarteProps) {
   return (
-    <Pressable
+        <Pressable
           style={styles.carte}
           onPress={() => {
             // router.push({ pathname: '/result', params: { id: item.id } });
           }}
           accessibilityRole="button"
-          accessibilityLabel={`Ouvrir ${item.animal} reconnu le ${item.date}`}
+          accessibilityLabel={`Ouvrir ${item.animale_name} reconnu le ${item.date}`}
         >
-          <Image source={{ uri: item.uri }} contentFit='cover' style={styles.carteImage} />
+          <Image source={{ uri: item.uri }} style={styles.carteImage} />
           <View style={styles.carteCorps}>
-            <Text style={styles.carteTitre}>{item.animal}</Text>
+            <View style={{ justifyContent: "space-between", flexDirection: "row" }}>
+              <Text style={styles.carteTitre}>{item.animale_name}</Text>
+              <Text>{item.animale_rate_reconize} %</Text>
+            </View>
             <Text style={styles.carteMeta}>{item.date}</Text>
           </View>
         </Pressable>
+  
   )
 }
 

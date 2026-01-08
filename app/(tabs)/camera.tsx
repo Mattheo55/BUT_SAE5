@@ -294,8 +294,6 @@ export default function CameraScreen() {
             borderColor: 'red',
             borderWidth: 3,
             zIndex: 20,
-            // Conversion approximative des coordonnées 640x640 vers l'écran
-            // Note: C'est une simplification, ça peut être un peu décalé selon le ratio de l'écran
             left: `${( (box.x - box.w / 2) / 640) * 100}%`,
             top: `${( (box.y - box.h / 2) / 640) * 100}%`,
             width: `${(box.w / 640) * 100}%`,
@@ -310,11 +308,7 @@ export default function CameraScreen() {
       )}
        {device?.hasFlash && (
         <TouchableOpacity style={styles.flashButton} onPress={toggleFlash}>
-          if (flash === 'on') {
-            <Image source={require('../../assets/images/ActiverFlash.png') } style={{width: 100, height: 100}} ></Image>
-          }else{
-            <Image source={require('../../assets/images/DesactiverFlash.png') } style={{width: 100, height: 100}} ></Image>
-          }
+          <Text style={styles.iconText}>{flash === 'on' ? '⚡️' : '🚫'}</Text>
         </TouchableOpacity>
       )}
       <View style={styles.overlay}>
@@ -329,14 +323,14 @@ export default function CameraScreen() {
       </View>
       <View style={styles.controls}>
         <TouchableOpacity style={styles.galleryButton} onPress={pickImage}>
-          <Image source={require('../../assets/images/Galerie.png') } style={{width: 100, height: 100}} ></Image>
+          <Text style={styles.iconText}>🖼️</Text>
         </TouchableOpacity>
         <Pressable onPress={takePicture}>
           <View style={styles.shutterOuter}><View style={styles.shutterInner} /></View>
         </Pressable>
         <TouchableOpacity style={styles.flipButton} onPress={toggleCamera}>
-          <Image source={require('../../assets/images/RetournerAppareilPhoto.png') } style={{width: 100, height: 100}} ></Image>
-        </TouchableOpacity>
+          <Text style={styles.iconText}>🔄</Text>
+         </TouchableOpacity>
       </View>
     </View>
   );

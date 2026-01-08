@@ -152,6 +152,7 @@ const AuthView = () => {
           <TextInput 
             style={styles.input} 
             placeholder="Nom complet" 
+            placeholderTextColor="#888"
             value={name}
             onChangeText={setName}
           />
@@ -159,6 +160,7 @@ const AuthView = () => {
         <TextInput 
           style={styles.input} 
           placeholder="Email" 
+          placeholderTextColor="#888"
           keyboardType="email-address"
           autoCapitalize="none"
           value={email}
@@ -167,6 +169,7 @@ const AuthView = () => {
         <TextInput 
           style={styles.input} 
           placeholder="Mot de passe" 
+          placeholderTextColor="#888"
           secureTextEntry
           value={password}
           onChangeText={setPassword}
@@ -224,7 +227,7 @@ const styles = StyleSheet.create({
   value: { fontSize: 16, color: '#333', fontWeight: '500', marginBottom: 15 },
   divider: { height: 1, backgroundColor: '#eee', marginVertical: 10 },
   form: { width: '100%' },
-  input: { backgroundColor: 'white', padding: 15, borderRadius: 8, marginBottom: 15, borderWidth: 1, borderColor: '#ddd' },
+  input: { backgroundColor: 'white', padding: 15, borderRadius: 8, marginBottom: 15, borderWidth: 1, borderColor: '#ddd', color: "#000" },
   primaryButton: { backgroundColor: '#007AFF', padding: 15, borderRadius: 8, alignItems: 'center', marginTop: 10 },
   primaryButtonText: { color: 'white', fontWeight: 'bold', fontSize: 16 },
   logoutButton: { marginTop: 30, padding: 15, alignItems: 'center' },

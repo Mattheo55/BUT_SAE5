@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "sae5-animaux",
-    "slug": "sae5-animaux",
+    "name": "DeepWild",
+    "slug": "deep-wild",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
-    "scheme": "sae5animaux",
+    "icon": "./assets/images/icon-dw.png",
+    "scheme": "deepwild",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {

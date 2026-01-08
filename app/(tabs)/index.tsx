@@ -1,3 +1,4 @@
+import NewsCarousel from '@/Components/NewsCarrousel';
 import RenderCarte from '@/Components/RenderCarte';
 import ThemedText from '@/Components/ThemedText';
 import ThemedView from '@/Components/ThemedView';
@@ -8,17 +9,14 @@ import axios from 'axios';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { MoveRight } from 'lucide-react-native';
 import React, { useCallback, useState } from 'react';
-import { ActivityIndicator, Button, Pressable, View } from 'react-native'; // 👈 N'oublie pas d'importer ActivityIndicator
+import { ActivityIndicator, Button, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useAuth } from './compte';
 
 export default function Index() {
 
   const {user, isLoading} = useAuth();
-
   const [isFetching, setIsFetching] = useState<boolean>(false);
   const [lastHistoryItem, setLastHistoryItem] = useState<HistoriqueItem | null>(null);
-
-
   const router = useRouter();
 
   async function fetchData() {
@@ -40,52 +38,90 @@ export default function Index() {
         fetchData()
       }
     }, [user])
-  )
+  );
 
   return (
-    <ThemedView>
+    <ScrollView style={{ flex: 1 }}>
+      <ThemedView style={styles.container}>
 
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 25 }}>
-        <ThemedText type='title'>DeepWild</ThemedText>
-        <ThemeModeButton/>
-      </View>
-
-      <View>
-        <View style={{ marginBottom: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-          {/* Correction orthographe : reconnu */}
-          <ThemedText bold>Dernier animal reconnu</ThemedText>
-          <Pressable onPress={() => router.push("/(tabs)/historique")}>
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <ThemedText> Historique </ThemedText>
-              <MoveRight size={20} color="gray" /> 
-            </View>
-          </Pressable>
+        <View style={styles.header}>
+          <ThemedText type='title'>DeepWild</ThemedText>
+          <ThemeModeButton/>
         </View>
 
-        {user ? (
-            isFetching ? (
-                // Cas 1 : Ça charge, on montre la roue
-                <ActivityIndicator size="large" style={{marginTop: 20}} />
-            ) : lastHistoryItem ? (
-                // Cas 2 : On a trouvé un animal
-                <RenderCarte item={lastHistoryItem} />
-            ) : (
-                // Cas 3 : Connecté mais liste vide
-                <ThemedText style={{opacity: 0.6, fontStyle: 'italic', marginTop: 10}}>Aucune analyse récente</ThemedText>
-            )
-        ) : (
-            <ThemedText style={{marginTop: 10}}>Connectez-vous pour enregistrer tous vos scans</ThemedText> 
-        )}
-        
-      </View>
+        {/* SECTION HISTORIQUE */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <ThemedText bold>Dernier animal reconnu</ThemedText>
+            <Pressable onPress={() => router.push("/(tabs)/historique")}>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <ThemedText style={{ fontSize: 14, color: 'gray' }}> Historique </ThemedText>
+                <MoveRight size={16} color="gray" /> 
+              </View>
+            </Pressable>
+          </View>
 
-      <View style={{marginTop: 20}}>
-        <ThemedText bold>Aider l'IA à apprendre</ThemedText>
-        <Button
-          title='Contribuer'
-          onPress={() => router.push('/(tabs)/contribute')}
-        />
-      </View>
-    </ThemedView>
+          {user ? (
+              isFetching ? (
+                  <ActivityIndicator size="large" style={{marginTop: 20}} />
+              ) : lastHistoryItem ? (
+                  <RenderCarte item={lastHistoryItem} />
+              ) : (
+                  <ThemedText style={styles.emptyText}>Aucune analyse récente</ThemedText>
+              )
+          ) : (
+              <ThemedText style={{marginTop: 10, opacity: 0.7}}>Connectez-vous pour voir vos scans</ThemedText> 
+          )}
+        </View>
+
+        
+
+        <View style={styles.section}>
+          <ThemedText bold style={{marginBottom: 10}}>Aider l'IA à apprendre</ThemedText>
+          <ThemedText style={{marginBottom: 15, fontSize: 14, opacity: 0.7}}>
+            Contribuez à la science en dessinant les contours des animaux sur vos photos.
+          </ThemedText>
+          <Button
+            title='Contribuer au Dataset'
+            onPress={() => router.push('/(tabs)/contribute')}
+          />
+        </View>
+
+        <View style={styles.section}>
+          <ThemedText bold>Actualité du monde animale</ThemedText>
+          <NewsCarousel/>
+        </View>
+
+      </ThemedView>
+    </ScrollView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    paddingHorizontal: 20, // Padding global sur les côtés
+    paddingTop: 20,
+  },
+  header: {
+    flexDirection: "row", 
+    justifyContent: "space-between", 
+    alignItems: "center", 
+    marginBottom: 25
+  },
+  section: {
+    marginBottom: 30, // Espace entre les blocs
+  },
+  sectionHeader: { 
+    marginBottom: 15, 
+    flexDirection: "row", 
+    justifyContent: "space-between", 
+    alignItems: "center" 
+  },
+  emptyText: {
+    opacity: 0.6, 
+    fontStyle: 'italic', 
+    marginTop: 10,
+    textAlign: 'center'
+  }
+});

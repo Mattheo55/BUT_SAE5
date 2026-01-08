@@ -45,7 +45,7 @@ export default function Index() {
     <ThemedView>
 
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 25 }}>
-        <ThemedText type='title'>Accueil</ThemedText>
+        <ThemedText type='title'>DeepWild</ThemedText>
         <ThemeModeButton/>
       </View>
 

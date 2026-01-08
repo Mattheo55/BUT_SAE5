@@ -282,6 +282,7 @@ export default function CameraScreen() {
       {/* --- LE CARRÉ ROUGE TEMPS RÉEL --- */}
       {box && detectionLabel !== "" && (
         <View
+          pointerEvents='none'
           style={{
             position: 'absolute',
             borderColor: 'red',

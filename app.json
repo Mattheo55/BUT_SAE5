@@ -1,18 +1,23 @@
 {
   "expo": {
-    "name": "sae5-animaux",
-    "slug": "sae5-animaux",
+    "name": "DeepWild",
+    "slug": "deep-wild",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
-    "scheme": "sae5animaux",
+    "icon": "./assets/images/icon-dw.png",
+    "scheme": "deepwild",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSCameraUsageDescription": "Cette application a besoin d'accéder à la caméra pour prendre des photos et enregistrer des vidéos."
-      }
+        "NSCameraUsageDescription": "Cette application a besoin d'accéder à la caméra pour prendre des photos et enregistrer des vidéos.",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        },
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "bundleIdentifier": "fr.metzsae.deepwild"
     },
     "android": {
       "adaptiveIcon": {
@@ -24,7 +29,8 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "permissions": [
-        "CAMERA"
+        "CAMERA",
+        "android.permission.CAMERA"
       ],
       "package": "com.tonnom.app"
     },
@@ -46,6 +52,14 @@
           }
         }
       ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
       "react-native-vision-camera",
       "react-native-fast-tflite",
       "expo-secure-store"
@@ -53,6 +67,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "ab2a7acb-4fce-46c4-9b48-ddc4d01f9317"
+      }
     }
   }
 }

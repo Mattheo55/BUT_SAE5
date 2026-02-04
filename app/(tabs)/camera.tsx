@@ -1,121 +1,186 @@
-import { API_URL, cloudName } from '@/helper/constant';
-import axios from 'axios';
-import * as ImagePicker from 'expo-image-picker';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Pressable, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useTensorflowModel } from 'react-native-fast-tflite';
+import { API_URL, cloudName } from "@/helper/constant";
+import axios from "axios";
+import * as ImagePicker from "expo-image-picker";
+import React, { useEffect, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  Pressable,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import {
   Camera,
   CameraPosition,
-  runAtTargetFps,
   useCameraDevice,
   useCameraPermission,
-  useFrameProcessor
-} from 'react-native-vision-camera';
-import { Worklets, useSharedValue } from 'react-native-worklets-core';
-import { useResizePlugin } from 'vision-camera-resize-plugin';
-import { useAuth } from './compte';
+} from "react-native-vision-camera";
+import { useAuth } from "./compte";
 
 export default function CameraScreen() {
   const { user } = useAuth();
   const { hasPermission, requestPermission } = useCameraPermission();
-  const [cameraPosition, setCameraPosition] = useState<CameraPosition>('back');
-  const [flash, setFlash] = useState<'off' | 'on'>('off');
+  const [cameraPosition, setCameraPosition] = useState<CameraPosition>("back");
+  const [flash, setFlash] = useState<"off" | "on">("off");
 
   const device = useCameraDevice(cameraPosition);
   const cameraRef = useRef<Camera>(null);
 
+  // États pour l'affichage
   const [detectionLabel, setDetectionLabel] = useState<string>("");
   const [detectionScore, setDetectionScore] = useState<string>("");
+
+  // États pour la capture manuelle (mode "Pause/Résultat")
   const [uri, setUri] = useState<string | null>(null);
-  const [capturedResult, setCapturedResult] = useState<{ label: string, score: string } | null>(null);
+  const [capturedResult, setCapturedResult] = useState<{
+    label: string;
+    score: string;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const [box, setBox] = useState<{ x: number, y: number, w: number, h: number } | null>(null);
+  // Remplacement de "isBusy" par un Ref pour ne pas bloquer le thread JS
+  const isAnalyzing = useRef(false);
+  const intervalRef = useRef<any>(null);
 
-  // --- CHARGEMENT MODELE (Pour la caméra en temps réel) ---
-  // On laisse la config par défaut, le FrameProcessor gère bien la mémoire interne
-  const objectDetection = useTensorflowModel(require("../../assets/models/best_float16.tflite"));
-  const model = objectDetection.model;
-  
-  const { resize } = useResizePlugin();
-  const isBusy = useSharedValue(false);
+  // --- CONFIGURATION ---
+  // On vise 3 FPS (1000ms / 3 ≈ 333ms)
+  const TARGET_FPS_INTERVAL = 333;
 
-  const labels = useMemo(() => [
-    'Ours', 'Guépard', "Crocodile", 'Éléphant', 'Renard',
-    'Girafe', 'Hérisson', 'Humain', 'Léopard', 'Lion',
-    'Lynx', 'Autruche', 'Rhinocéros', 'Tigre', 'Zèbre'
-  ], []);
+  useEffect(() => {
+    requestPermission();
+  }, [requestPermission]);
 
-  const format = useMemo(() => {
-    if (!device) return undefined;
-    return device.formats.find(f =>
-      f.videoWidth === 1280 && f.videoHeight === 720 && f.maxFps <= 30
-    ) || device.formats[0];
-  }, [device]);
+  // --- BOUCLE D'ANALYSE SERVEUR (3 FPS) ---
+  useEffect(() => {
+    // Si on a déjà figé une image (uri existe) ou pas de caméra, on arrête l'analyse
+    if (uri || !device || !cameraRef.current) {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      return;
+    }
 
-  useEffect(() => { requestPermission(); }, [requestPermission]);
+    // Démarrage de la boucle
+    intervalRef.current = setInterval(async () => {
+      // 1. Verrou : Si une analyse est déjà en cours, on passe notre tour (pour éviter de surcharger le réseau)
+      if (isAnalyzing.current) return;
 
-  // --- FONCTION GALERIE (VIA API) : MIGRATION ---
-  const processImageFromGallery = async (imageUri: string) => {
-    setLoading(true);
-    console.log("--- Début traitement via API ---");
+      try {
+        isAnalyzing.current = true;
 
+        // 2. Capture rapide (basse qualité pour la vitesse d'envoi)
+        if (cameraRef.current) {
+          const photo = await cameraRef.current.takePhoto({
+            flash: "off",
+            enableShutterSound: false, // Tente de couper le son (Android)
+          });
+
+          // 3. Envoi au serveur
+          // NOTE: Idéalement, votre API Python devrait accepter le fichier directement sans passer par Cloudinary
+          // pour le mode "live" afin de réduire la latence.
+          // Ici, j'utilise la logique existante (Cloudinary -> Python) mais c'est lourd pour du temps réel.
+          await analyzeFrame(photo.path);
+        }
+      } catch (err) {
+        console.log("Erreur boucle analyse:", err);
+      } finally {
+        isAnalyzing.current = false;
+      }
+    }, TARGET_FPS_INTERVAL);
+
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [uri, device, cameraRef, cameraPosition]); // Dépendances importantes
+
+  // --- FONCTION D'ANALYSE (Logique métier) ---
+  const analyzeFrame = async (imagePath: string) => {
     try {
-      // 1. Upload vers Cloudinary
       const formData = new FormData();
-      formData.append('file', {
-          uri: imageUri,
-          type: "image/jpeg",
-          name: "upload.jpg"
+      formData.append("file", {
+        uri: `file://${imagePath}`,
+        type: "image/jpeg",
+        name: "live_frame.jpg",
       } as any);
-      formData.append('upload_preset', 'animal_sae');    
-      
+      formData.append("upload_preset", "animal_sae");
+
+      // A. Upload Cloudinary
       const uploadRes = await axios.post(
         `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
         formData,
-        { headers: { 'Content-Type': 'multipart/form-data' } }
+        { headers: { "Content-Type": "multipart/form-data" } },
+      );
+      const imageUrl = uploadRes.data.secure_url;
+
+      // B. Analyse Python
+      const apiRes = await axios.post(`${API_URL}/analyze_animal`, {
+        image_url: imageUrl,
+      });
+
+      const { label, score } = apiRes.data;
+
+      // Mise à jour de l'UI en temps réel (sans figer l'écran)
+      if (label && label !== "Inconnu") {
+        setDetectionLabel(label);
+        setDetectionScore(score); // Assurez-vous que l'API renvoie un format texte (ex: "95%")
+      } else {
+        // Optionnel : remettre à vide si rien n'est détecté
+        // setDetectionLabel("");
+      }
+    } catch (error) {
+      // On ignore les erreurs silencieusement dans la boucle live pour ne pas spammer d'alertes
+      console.log("Erreur analyse live:", error);
+    }
+  };
+
+  // --- FONCTION GALERIE & SAUVEGARDE (Code existant conservé pour le mode manuel) ---
+  const processImageFromGallery = async (imageUri: string) => {
+    setLoading(true);
+    setUri(imageUri); // On fige l'écran immédiatement
+
+    try {
+      const formData = new FormData();
+      formData.append("file", {
+        uri: imageUri,
+        type: "image/jpeg",
+        name: "upload.jpg",
+      } as any);
+      formData.append("upload_preset", "animal_sae");
+
+      const uploadRes = await axios.post(
+        `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+        formData,
+        { headers: { "Content-Type": "multipart/form-data" } },
       );
 
       const imageUrl = uploadRes.data.secure_url;
-      console.log('Image Uploadée :', imageUrl);
-
-      // 2. Envoi dans API Python locale
-      const apiRes = await axios.post(`${API_URL}/analyze_animal`, { image_url: imageUrl });
+      const apiRes = await axios.post(`${API_URL}/analyze_animal`, {
+        image_url: imageUrl,
+      });
 
       const { label, score, annoted_image } = apiRes.data;
-      console.log('Résultat API :', label, score);
-
       setCapturedResult({ label, score: score });
-      
+
       if (annoted_image) {
-        console.log("L'api python a bien renvoyer une image"),
-          setUri(`data:image/jpeg;base64,${annoted_image}`);
-      } else {
-          setUri(imageUri);
+        setUri(`data:image/jpeg;base64,${annoted_image}`);
       }
 
-      // 3. Sauvegarde historique
       await putInHistory(label, score, imageUrl);
-
     } catch (error) {
       console.error("Erreur API:", error);
-      Alert.alert("Oups", "Impossible d'analyser l'image via le serveur. Vérifie que ton PC est allumé et l'API lancée.");
+      Alert.alert("Erreur", "Impossible d'analyser l'image.");
+      setUri(null); // Retour caméra si erreur
     } finally {
       setLoading(false);
     }
   };
 
   const pickImage = async () => {
-    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permissionResult.granted) {
-      Alert.alert("Permission", "Accès galerie requis");
-      return;
-    }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
+      mediaTypes: ["images"],
       allowsEditing: true,
-      aspect: [1, 1],
       quality: 0.7,
     });
     if (!result.canceled && result.assets) {
@@ -123,147 +188,80 @@ export default function CameraScreen() {
     }
   };
 
-  // Callback pour le Frame Processor
-  const updateResultOnJS = Worklets.createRunOnJS((label: string, score: string, boundingBox: any) => {
-    setDetectionLabel(label);
-    setDetectionScore(score);
-    setBox(boundingBox)
-  });
+  // --- ACTIONS UTILISATEUR ---
+  const toggleCamera = () =>
+    setCameraPosition((cur) => (cur === "back" ? "front" : "back"));
+  const toggleFlash = () => setFlash((cur) => (cur === "off" ? "on" : "off"));
 
-  const toggleCamera = () => setCameraPosition((cur) => (cur === 'back' ? 'front' : 'back'));
-  const toggleFlash = () => setFlash((cur) => (cur === 'off' ? 'on' : 'off'));
-  const closePhoto = () => { setUri(null); setCapturedResult(null); };
-
+  // Bouton "Photo" manuel : Fige l'état actuel
   const takePicture = async () => {
-    try {
-      const result = { label: detectionLabel, score: detectionScore };
-      setCapturedResult(result);
-      if (cameraRef.current) {
-        const photo = await cameraRef.current.takePhoto({ flash: flash, enableShutterSound: true });
-        if (photo?.path) {
-          const fullUri = `file://${photo.path}`;
-          setUri(fullUri);
-          putInHistory(result.label, result.score, fullUri);
-        }
-      }
-    } catch (error) { console.error("Erreur photo:", error); }
+    // Si on a déjà un label détecté par le live, on peut juste figer ça
+    if (cameraRef.current) {
+      const photo = await cameraRef.current.takePhoto({ flash: flash });
+      // On traite cette photo comme une photo de galerie (haute qualité, historique, etc.)
+      await processImageFromGallery(`file://${photo.path}`);
+    }
   };
 
-  // --- FRAME PROCESSOR (CAMERA TEMPS RÉEL) ---
-  // --- FRAME PROCESSOR CORRIGÉ & DÉBUGGÉ ---
-  // --- FRAME PROCESSOR OPTIMISÉ (Zéro Lag) ---
-  const frameProcessor = useFrameProcessor((frame) => {
-    'worklet';
-    if (model == null || isBusy.value) return;
-    
-    // On limite l'analyse à 5 fois par seconde max pour laisser respirer le CPU
-    runAtTargetFps(3, () => {
-      'worklet';
-      isBusy.value = true;
-      try {
-        const resized = resize(frame, {
-          scale: { width: 640, height: 640 },
-          pixelFormat: 'rgb',
-          dataType: 'float32',
-        });
-        
-        const outputs = model.runSync([resized]);
-        const data = outputs[0];
+  const closePhoto = () => {
+    setUri(null);
+    setCapturedResult(null);
+    setDetectionLabel("");
+    setDetectionScore("");
+    // L'effet useEffect redémarrera automatiquement la boucle live
+  };
 
-        if (data && data.length > 0) {
-             const numAnchors = 8400;
-             const numClass = 15;
-             
-             // On monte un peu le seuil pour éviter les "faux positifs" qui clignotent
-             let bestScore = 0.70; 
-             let bestClassIdx = -1;
-             let bestAnchorIdx = -1;
-
-             for (let c = 0; c < numClass; c++) {
-               const rowOffset = (4 + c) * numAnchors;
-               for (let i = 0; i < numAnchors; i++) {
-                 const score = (data as any)[rowOffset + i];
-                 if (score > bestScore) { 
-                    bestScore = score; 
-                    bestClassIdx = c; 
-                    bestAnchorIdx = i;
-                 }
-               }
-             }
-
-             if (bestClassIdx !== -1 && bestAnchorIdx !== -1) {
-                let x = (data as any)[0 * numAnchors + bestAnchorIdx];
-                let y = (data as any)[1 * numAnchors + bestAnchorIdx];
-                let w = (data as any)[2 * numAnchors + bestAnchorIdx];
-                let h = (data as any)[3 * numAnchors + bestAnchorIdx];
-
-                if (x < 2 && w < 2) { 
-                    x = x * 640; y = y * 640; w = w * 640; h = h * 640;
-                }
-
-                
-                const boundingBox = { x, y, w, h };
-                updateResultOnJS(labels[bestClassIdx], `${Math.round(bestScore * 100)}%`, boundingBox);
-             } else {
-                updateResultOnJS("", "", null);
-             }
-        }
-      } catch (e) { 
-      } finally { 
-        isBusy.value = false; 
-      }
-    });
-  }, [model, labels]);
-
-  async function putInHistory(label: string, scoreStr: string, imageUri: string) {
-     if (!user || !label || label === "Inconnu") return;
+  async function putInHistory(
+    label: string,
+    scoreStr: string,
+    imageUri: string,
+  ) {
+    if (!user || !label || label === "Inconnu") return;
     const numericScore = parseInt(scoreStr.replace("%", ""), 10);
     try {
-      let finalUri = imageUri;
-      
-      if (!imageUri.startsWith('http')) {
-          const formData = new FormData();
-          formData.append('file', { uri: imageUri, type: 'image/jpeg', name: "upload.jpg" } as any);
-          formData.append('upload_preset', 'animal_sae');
-          const cloudRes = await axios.post(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-          finalUri = cloudRes.data.secure_url;
-      }
-
-      await axios.post(`${API_URL}/add_history`, { 
-          user_id: user.id, 
-          animale_name: label, 
-          animale_rate_reconize: numericScore, 
-          uri: finalUri 
+      // Logique historique conservée...
+      await axios.post(`${API_URL}/add_history`, {
+        user_id: user.id,
+        animale_name: label,
+        animale_rate_reconize: numericScore,
+        uri: imageUri,
       });
-    } catch (error: any) { console.error("History Error"); }
+    } catch (e) {}
   }
 
   // --- RENDER ---
+  // 1. Écran de résultat (Image figée)
   if (uri) {
     return (
       <View style={styles.center}>
-        <Text style={{ color: 'white', marginBottom: 20, fontSize: 18 }}>Résultat :</Text>
-        <Image source={{ uri: uri }} style={{ width: '90%', height: '60%', borderRadius: 10 }} resizeMode="contain" />
+        <Image
+          source={{ uri: uri }}
+          style={{ width: "90%", height: "60%", borderRadius: 10 }}
+          resizeMode="contain"
+        />
         <View style={styles.resultContainer}>
           {loading ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <ActivityIndicator color="#00ff00" />
-              <Text style={[styles.finalResultText, { marginLeft: 10 }]}>Analyse en cours...</Text>
-            </View>
-          ) : capturedResult && capturedResult.label !== "Inconnu" && capturedResult.label !== "" ? (
-            <Text style={styles.finalResultText}>C'est un {capturedResult.label} ({capturedResult.score}) !</Text>
-          ) : (
-            <Text style={styles.finalResultText}>Aucun animal identifié.</Text>
-          )}
+            <ActivityIndicator size="large" color="#00ff00" />
+          ) : capturedResult ? (
+            <Text style={styles.finalResultText}>
+              {capturedResult.label} ({capturedResult.score})
+            </Text>
+          ) : null}
         </View>
         <TouchableOpacity onPress={closePhoto} style={styles.btnRetour}>
-          <Text style={styles.textBtn}>Retour caméra</Text>
+          <Text style={styles.textBtn}>Retour Caméra</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
-  if (!hasPermission || !device) return <View style={styles.center}><Text style={styles.whiteText}>Chargement...</Text></View>;
+  // 2. Écran Caméra (Live Server Scan)
+  if (!hasPermission || !device)
+    return (
+      <View style={styles.center}>
+        <Text style={styles.whiteText}>Chargement...</Text>
+      </View>
+    );
 
   return (
     <View style={styles.container}>
@@ -272,83 +270,168 @@ export default function CameraScreen() {
         ref={cameraRef}
         style={StyleSheet.absoluteFill}
         device={device}
-        isActive={!uri}
-        format={format}
-        frameProcessor={frameProcessor}
-        pixelFormat="yuv"
+        isActive={true}
+        photo={true} // Important pour permettre takePhoto
         videoStabilizationMode="off"
-        photo={true}
       />
-      {/* --- LE CARRÉ ROUGE TEMPS RÉEL --- */}
-      {box && detectionLabel !== "" && (
-        <View
-          pointerEvents='none'
-          style={{
-            position: 'absolute',
-            borderColor: 'red',
-            borderWidth: 3,
-            zIndex: 20,
-            left: `${( (box.x - box.w / 2) / 640) * 100}%`,
-            top: `${( (box.y - box.h / 2) / 640) * 100}%`,
-            width: `${(box.w / 640) * 100}%`,
-            height: `${(box.h / 640) * 100}%`,
-          }}
-        >
-            {/* Petit label au dessus du carré */}
-            <Text style={{backgroundColor: 'red', color: 'white', alignSelf: 'flex-start', padding: 2}}>
-                {detectionLabel} {detectionScore}
-            </Text>
-        </View>
-      )}
-       {device?.hasFlash && (
-        <TouchableOpacity style={styles.flashButton} onPress={toggleFlash}>
-          <Text style={styles.iconText}>{flash === 'on' ? '⚡️' : '🚫'}</Text>
-        </TouchableOpacity>
-      )}
+
+      {/* Overlay Interface */}
       <View style={styles.overlay}>
         {detectionLabel ? (
           <View style={styles.resultCard}>
-            <Text style={styles.labelText}>{detectionLabel}</Text>
-            <Text style={styles.scoreText}>{detectionScore}</Text>
+            <View style={{ alignItems: "center" }}>
+              <Text style={styles.liveIndicator}>🔴 LIVE SERVER</Text>
+              <Text style={styles.labelText}>{detectionLabel}</Text>
+              <Text style={styles.scoreText}>{detectionScore}</Text>
+            </View>
           </View>
         ) : (
-          <View style={styles.searchingBox}><Text style={styles.searchingText}>Recherche...</Text></View>
+          <View style={styles.searchingBox}>
+            <ActivityIndicator size="small" color="white" />
+            <Text style={styles.searchingText}> Analyse serveur...</Text>
+          </View>
         )}
       </View>
+
       <View style={styles.controls}>
         <TouchableOpacity style={styles.galleryButton} onPress={pickImage}>
           <Text style={styles.iconText}>🖼️</Text>
         </TouchableOpacity>
+
         <Pressable onPress={takePicture}>
-          <View style={styles.shutterOuter}><View style={styles.shutterInner} /></View>
+          <View style={styles.shutterOuter}>
+            <View style={styles.shutterInner} />
+          </View>
         </Pressable>
+
         <TouchableOpacity style={styles.flipButton} onPress={toggleCamera}>
           <Text style={styles.iconText}>🔄</Text>
-         </TouchableOpacity>
+        </TouchableOpacity>
       </View>
+
+      {/* Bouton Flash */}
+      <TouchableOpacity style={styles.flashButton} onPress={toggleFlash}>
+        <Text style={styles.iconText}>{flash === "on" ? "⚡️" : "🚫"}</Text>
+      </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: 'black' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'black' },
-  whiteText: { color: 'white', fontWeight: 'bold' },
-  overlay: { position: 'absolute', top: 50, alignSelf: 'center', zIndex: 10, alignItems: 'center' },
-  resultCard: { backgroundColor: 'rgba(0,255,0,0.3)', paddingHorizontal: 35, paddingVertical: 20, borderRadius: 25, alignItems: 'center', borderWidth: 2, borderColor: '#00ff00', flexDirection: "row", gap: 15 },
-  searchingBox: { backgroundColor: 'rgba(0,0,0,0.6)', padding: 15, borderRadius: 15 },
-  labelText: { color: '#00ff00', fontSize: 28, fontWeight: '900', textTransform: 'uppercase' },
-  scoreText: { color: 'white', fontSize: 15, fontWeight: 'bold' },
-  searchingText: { color: '#aaa', fontSize: 16, fontWeight: 'bold' },
-  controls: { position: 'absolute', bottom: 50, width: '100%', flexDirection: 'row', justifyContent: 'space-evenly', alignItems: 'center' },
-  shutterOuter: { width: 80, height: 80, borderRadius: 40, borderWidth: 4, borderColor: 'white', justifyContent: 'center', alignItems: 'center' },
-  shutterInner: { width: 60, height: 60, borderRadius: 30, backgroundColor: 'white' },
-  flashButton: { position: 'absolute', top: 60, left: 30, backgroundColor: 'rgba(0,0,0,0.5)', width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center' },
-  flipButton: { backgroundColor: 'rgba(0,0,0,0.5)', width: 60, height: 60, borderRadius: 30, justifyContent: 'center', alignItems: 'center' },
-  galleryButton: { backgroundColor: 'rgba(0,0,0,0.5)', width: 60, height: 60, borderRadius: 30, justifyContent: 'center', alignItems: 'center' },
+  container: { flex: 1, backgroundColor: "black" },
+  center: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "black",
+  },
+  whiteText: { color: "white", fontWeight: "bold" },
+  overlay: {
+    position: "absolute",
+    top: 80,
+    alignSelf: "center",
+    zIndex: 10,
+    width: "100%",
+    alignItems: "center",
+  },
+  resultCard: {
+    backgroundColor: "rgba(0,0,0,0.7)",
+    padding: 20,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: "#00ff00",
+    minWidth: 200,
+  },
+  liveIndicator: {
+    color: "red",
+    fontSize: 10,
+    fontWeight: "bold",
+    marginBottom: 5,
+  },
+  searchingBox: {
+    flexDirection: "row",
+    backgroundColor: "rgba(0,0,0,0.6)",
+    padding: 15,
+    borderRadius: 30,
+    alignItems: "center",
+  },
+  labelText: {
+    color: "#00ff00",
+    fontSize: 32,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    textAlign: "center",
+  },
+  scoreText: {
+    color: "white",
+    fontSize: 18,
+    fontWeight: "bold",
+    textAlign: "center",
+  },
+  searchingText: { color: "#ccc", fontSize: 14, marginLeft: 10 },
+  controls: {
+    position: "absolute",
+    bottom: 50,
+    width: "100%",
+    flexDirection: "row",
+    justifyContent: "space-evenly",
+    alignItems: "center",
+  },
+  shutterOuter: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 4,
+    borderColor: "white",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  shutterInner: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "white",
+  },
+  flashButton: {
+    position: "absolute",
+    top: 50,
+    right: 20,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  flipButton: {
+    backgroundColor: "rgba(0,0,0,0.5)",
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  galleryButton: {
+    backgroundColor: "rgba(0,0,0,0.5)",
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: "center",
+    alignItems: "center",
+  },
   iconText: { fontSize: 24 },
-  btnRetour: { marginTop: 30, padding: 15, backgroundColor: 'white', borderRadius: 10 },
-  textBtn: { color: 'black', fontWeight: 'bold' },
-  resultContainer: { marginTop: 20, alignItems: 'center' },
-  finalResultText: { color: '#00ff00', fontSize: 22, fontWeight: 'bold', textAlign: 'center' }
+  btnRetour: {
+    marginTop: 30,
+    padding: 15,
+    backgroundColor: "white",
+    borderRadius: 10,
+  },
+  textBtn: { color: "black", fontWeight: "bold" },
+  resultContainer: { marginTop: 20, alignItems: "center" },
+  finalResultText: {
+    color: "#00ff00",
+    fontSize: 24,
+    fontWeight: "bold",
+    textAlign: "center",
+  },
 });

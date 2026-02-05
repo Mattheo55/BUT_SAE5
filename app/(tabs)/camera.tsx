@@ -1,7 +1,8 @@
 import { API_URL, cloudName } from "@/helper/constant";
 import axios from "axios";
+import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -27,14 +28,31 @@ export default function CameraScreen() {
   const [cameraPosition, setCameraPosition] = useState<CameraPosition>("back");
   const [flash, setFlash] = useState<"off" | "on">("off");
 
-  const device = useCameraDevice(cameraPosition);
-  const cameraRef = useRef<Camera>(null);
+  // Indicateur visuel pour le réseau
+  const [isNetworkBusy, setIsNetworkBusy] = useState(false);
 
-  // États pour l'affichage
+  const device = useCameraDevice(cameraPosition);
+
+  // On privilégie un format HD (1280x720) ou VGA (640x480) pour avoir une bonne source
+  const format = useMemo(() => {
+    if (!device) return undefined;
+    return (
+      device.formats.find(
+        (f) => f.videoWidth === 1280 || f.videoWidth === 640,
+      ) || device.formats[0]
+    );
+  }, [device]);
+
+  const cameraRef = useRef<Camera>(null);
+  const clearTimerRef = useRef<any>(null);
+
+  // IMPORTANT : Ce ref stocke l'heure de la DERNIÈRE requête terminée avec succès
+  // Cela permet d'ignorer les réponses qui arrivent dans le désordre ou trop tard.
+  const lastProcessedTimestamp = useRef<number>(0);
+
   const [detectionLabel, setDetectionLabel] = useState<string>("");
   const [detectionScore, setDetectionScore] = useState<string>("");
 
-  // États pour la capture manuelle (mode "Pause/Résultat")
   const [uri, setUri] = useState<string | null>(null);
   const [capturedResult, setCapturedResult] = useState<{
     label: string;
@@ -42,104 +60,135 @@ export default function CameraScreen() {
   } | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Remplacement de "isBusy" par un Ref pour ne pas bloquer le thread JS
+  // Verrou pour éviter de lancer 50 uploads en même temps
   const isAnalyzing = useRef(false);
   const intervalRef = useRef<any>(null);
-
-  // --- CONFIGURATION ---
-  // On vise 3 FPS (1000ms / 3 ≈ 333ms)
-  const TARGET_FPS_INTERVAL = 333;
 
   useEffect(() => {
     requestPermission();
   }, [requestPermission]);
 
-  // --- BOUCLE D'ANALYSE SERVEUR (3 FPS) ---
+  const updateUI = (label: string, score: string) => {
+    // FILTRE DE QUALITÉ : On ignore les résultats sous 50% de confiance
+    // Cela réduit énormément les faux positifs (voir des animaux dans les murs)
+    const numericScore = parseInt(score.replace("%", ""), 10);
+    if (isNaN(numericScore) || numericScore < 70) return;
+
+    if (label && label !== "Inconnu") {
+      setDetectionLabel(label);
+      setDetectionScore(score);
+
+      if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
+
+      // Persistance de 3 secondes pour fluidifier l'affichage
+      clearTimerRef.current = setTimeout(() => {
+        setDetectionLabel("");
+        setDetectionScore("");
+      }, 3000);
+    }
+  };
+
   useEffect(() => {
-    // Si on a déjà figé une image (uri existe) ou pas de caméra, on arrête l'analyse
     if (uri || !device || !cameraRef.current) {
       if (intervalRef.current) clearInterval(intervalRef.current);
       return;
     }
 
-    // Démarrage de la boucle
     intervalRef.current = setInterval(async () => {
-      // 1. Verrou : Si une analyse est déjà en cours, on passe notre tour (pour éviter de surcharger le réseau)
       if (isAnalyzing.current) return;
 
       try {
         isAnalyzing.current = true;
+        setIsNetworkBusy(true);
 
-        // 2. Capture rapide (basse qualité pour la vitesse d'envoi)
         if (cameraRef.current) {
           const photo = await cameraRef.current.takePhoto({
             flash: "off",
-            enableShutterSound: false, // Tente de couper le son (Android)
+            enableShutterSound: false,
           });
 
-          // 3. Envoi au serveur
-          // NOTE: Idéalement, votre API Python devrait accepter le fichier directement sans passer par Cloudinary
-          // pour le mode "live" afin de réduire la latence.
-          // Ici, j'utilise la logique existante (Cloudinary -> Python) mais c'est lourd pour du temps réel.
-          await analyzeFrame(photo.path);
+          const currentRequestTime = Date.now();
+          await analyzeFrame(photo.path, currentRequestTime);
         }
       } catch (err) {
-        console.log("Erreur boucle analyse:", err);
+        console.log("Erreur boucle:", err);
       } finally {
         isAnalyzing.current = false;
+        // On ne coupe pas le busy indicator tout de suite pour éviter le clignotement
+        // On le laisse géré par le cycle suivant ou un timeout si besoin
+        setTimeout(() => setIsNetworkBusy(false), 500);
       }
-    }, TARGET_FPS_INTERVAL);
+    }, 1200); // 1.2 secondes : Un bon compromis pour du 640px via Cloudinary
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
+      if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
     };
-  }, [uri, device, cameraRef, cameraPosition]); // Dépendances importantes
+  }, [uri, device, cameraRef, cameraPosition]);
 
-  // --- FONCTION D'ANALYSE (Logique métier) ---
-  const analyzeFrame = async (imagePath: string) => {
+  const analyzeFrame = async (imagePath: string, requestTime: number) => {
     try {
+      let uriToUpload = `file://${imagePath}`;
+
+      // RESTAURATION : 640px de large
+      try {
+        const manipResult = await ImageManipulator.manipulateAsync(
+          uriToUpload,
+          [{ resize: { width: 640 } }], // Retour à 640px pour la précision
+          { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }, // Qualité correcte
+        );
+        uriToUpload = manipResult.uri;
+      } catch (e) {
+        console.log("Erreur manip, utilisation originale");
+      }
+
+      // Si une requête plus récente a DÉJÀ été traitée pendant notre compression, on s'arrête.
+      if (requestTime < lastProcessedTimestamp.current) return;
+
       const formData = new FormData();
       formData.append("file", {
-        uri: `file://${imagePath}`,
+        uri: uriToUpload,
         type: "image/jpeg",
-        name: "live_frame.jpg",
+        name: "live_hq.jpg",
       } as any);
       formData.append("upload_preset", "animal_sae");
 
-      // A. Upload Cloudinary
+      // Timeout un peu plus large (5s) car l'image est plus lourde (640px)
       const uploadRes = await axios.post(
         `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
         formData,
-        { headers: { "Content-Type": "multipart/form-data" } },
+        { headers: { "Content-Type": "multipart/form-data" }, timeout: 5000 },
       );
+
+      // Vérification temporelle après upload
+      if (requestTime < lastProcessedTimestamp.current) return;
+
       const imageUrl = uploadRes.data.secure_url;
 
-      // B. Analyse Python
-      const apiRes = await axios.post(`${API_URL}/analyze_animal`, {
-        image_url: imageUrl,
-      });
+      const apiRes = await axios.post(
+        `${API_URL}/analyze_animal`,
+        { image_url: imageUrl },
+        { timeout: 5000 },
+      );
 
-      const { label, score } = apiRes.data;
-
-      // Mise à jour de l'UI en temps réel (sans figer l'écran)
-      if (label && label !== "Inconnu") {
-        setDetectionLabel(label);
-        setDetectionScore(score); // Assurez-vous que l'API renvoie un format texte (ex: "95%")
+      // VERIFICATION FINALE CRITIQUE
+      // On met à jour l'interface SEULEMENT si cette requête est plus récente que la dernière affichée
+      if (requestTime > lastProcessedTimestamp.current) {
+        lastProcessedTimestamp.current = requestTime; // On marque ce temps comme le nouveau référentiel
+        const { label, score } = apiRes.data;
+        updateUI(label, score);
       } else {
-        // Optionnel : remettre à vide si rien n'est détecté
-        // setDetectionLabel("");
+        console.log("Rejet d'une réponse obsolète (Lag réseau)");
       }
     } catch (error) {
-      // On ignore les erreurs silencieusement dans la boucle live pour ne pas spammer d'alertes
-      console.log("Erreur analyse live:", error);
+      // Erreur silencieuse
     }
   };
 
-  // --- FONCTION GALERIE & SAUVEGARDE (Code existant conservé pour le mode manuel) ---
+  // --- LE RESTE DU CODE (Galerie, takePicture, Styles) reste identique ---
   const processImageFromGallery = async (imageUri: string) => {
     setLoading(true);
-    setUri(imageUri); // On fige l'écran immédiatement
-
+    setUri(imageUri);
     try {
       const formData = new FormData();
       formData.append("file", {
@@ -148,30 +197,24 @@ export default function CameraScreen() {
         name: "upload.jpg",
       } as any);
       formData.append("upload_preset", "animal_sae");
-
       const uploadRes = await axios.post(
         `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
         formData,
         { headers: { "Content-Type": "multipart/form-data" } },
       );
-
       const imageUrl = uploadRes.data.secure_url;
       const apiRes = await axios.post(`${API_URL}/analyze_animal`, {
         image_url: imageUrl,
       });
-
       const { label, score, annoted_image } = apiRes.data;
       setCapturedResult({ label, score: score });
-
       if (annoted_image) {
         setUri(`data:image/jpeg;base64,${annoted_image}`);
       }
-
       await putInHistory(label, score, imageUrl);
     } catch (error) {
-      console.error("Erreur API:", error);
       Alert.alert("Erreur", "Impossible d'analyser l'image.");
-      setUri(null); // Retour caméra si erreur
+      setUri(null);
     } finally {
       setLoading(false);
     }
@@ -181,36 +224,27 @@ export default function CameraScreen() {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images"],
       allowsEditing: true,
-      quality: 0.7,
+      quality: 0.8,
     });
     if (!result.canceled && result.assets) {
       await processImageFromGallery(result.assets[0].uri);
     }
   };
-
-  // --- ACTIONS UTILISATEUR ---
   const toggleCamera = () =>
     setCameraPosition((cur) => (cur === "back" ? "front" : "back"));
   const toggleFlash = () => setFlash((cur) => (cur === "off" ? "on" : "off"));
-
-  // Bouton "Photo" manuel : Fige l'état actuel
   const takePicture = async () => {
-    // Si on a déjà un label détecté par le live, on peut juste figer ça
     if (cameraRef.current) {
       const photo = await cameraRef.current.takePhoto({ flash: flash });
-      // On traite cette photo comme une photo de galerie (haute qualité, historique, etc.)
       await processImageFromGallery(`file://${photo.path}`);
     }
   };
-
   const closePhoto = () => {
     setUri(null);
     setCapturedResult(null);
     setDetectionLabel("");
     setDetectionScore("");
-    // L'effet useEffect redémarrera automatiquement la boucle live
   };
-
   async function putInHistory(
     label: string,
     scoreStr: string,
@@ -219,7 +253,6 @@ export default function CameraScreen() {
     if (!user || !label || label === "Inconnu") return;
     const numericScore = parseInt(scoreStr.replace("%", ""), 10);
     try {
-      // Logique historique conservée...
       await axios.post(`${API_URL}/add_history`, {
         user_id: user.id,
         animale_name: label,
@@ -229,8 +262,6 @@ export default function CameraScreen() {
     } catch (e) {}
   }
 
-  // --- RENDER ---
-  // 1. Écran de résultat (Image figée)
   if (uri) {
     return (
       <View style={styles.center}>
@@ -255,7 +286,6 @@ export default function CameraScreen() {
     );
   }
 
-  // 2. Écran Caméra (Live Server Scan)
   if (!hasPermission || !device)
     return (
       <View style={styles.center}>
@@ -271,16 +301,31 @@ export default function CameraScreen() {
         style={StyleSheet.absoluteFill}
         device={device}
         isActive={true}
-        photo={true} // Important pour permettre takePhoto
+        format={format}
+        photo={true}
         videoStabilizationMode="off"
       />
 
-      {/* Overlay Interface */}
       <View style={styles.overlay}>
         {detectionLabel ? (
           <View style={styles.resultCard}>
             <View style={{ alignItems: "center" }}>
-              <Text style={styles.liveIndicator}>🔴 LIVE SERVER</Text>
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  marginBottom: 5,
+                }}
+              >
+                <Text style={styles.liveIndicator}>🔴 LIVE</Text>
+                {isNetworkBusy && (
+                  <ActivityIndicator
+                    size="small"
+                    color="red"
+                    style={{ marginLeft: 5, transform: [{ scale: 0.6 }] }}
+                  />
+                )}
+              </View>
               <Text style={styles.labelText}>{detectionLabel}</Text>
               <Text style={styles.scoreText}>{detectionScore}</Text>
             </View>
@@ -288,7 +333,7 @@ export default function CameraScreen() {
         ) : (
           <View style={styles.searchingBox}>
             <ActivityIndicator size="small" color="white" />
-            <Text style={styles.searchingText}> Analyse serveur...</Text>
+            <Text style={styles.searchingText}> Recherche...</Text>
           </View>
         )}
       </View>
@@ -297,19 +342,15 @@ export default function CameraScreen() {
         <TouchableOpacity style={styles.galleryButton} onPress={pickImage}>
           <Text style={styles.iconText}>🖼️</Text>
         </TouchableOpacity>
-
         <Pressable onPress={takePicture}>
           <View style={styles.shutterOuter}>
             <View style={styles.shutterInner} />
           </View>
         </Pressable>
-
         <TouchableOpacity style={styles.flipButton} onPress={toggleCamera}>
           <Text style={styles.iconText}>🔄</Text>
         </TouchableOpacity>
       </View>
-
-      {/* Bouton Flash */}
       <TouchableOpacity style={styles.flashButton} onPress={toggleFlash}>
         <Text style={styles.iconText}>{flash === "on" ? "⚡️" : "🚫"}</Text>
       </TouchableOpacity>
@@ -342,12 +383,7 @@ const styles = StyleSheet.create({
     borderColor: "#00ff00",
     minWidth: 200,
   },
-  liveIndicator: {
-    color: "red",
-    fontSize: 10,
-    fontWeight: "bold",
-    marginBottom: 5,
-  },
+  liveIndicator: { color: "red", fontSize: 10, fontWeight: "bold" },
   searchingBox: {
     flexDirection: "row",
     backgroundColor: "rgba(0,0,0,0.6)",
